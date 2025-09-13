@@ -22,7 +22,7 @@ Twitch chat -> TikTok TTS -> audio playback. Windows‑friendly, no native build
 - Click “Start Bot” (button turns green while running). Logs are hidden by default—click “Show Logs” to view.
 - Dark mode is default. Toggle View → Dark Mode to switch.
 
-# In‑Chat Commands
+### In‑Chat Commands
 - Broadcaster/mods:
   - `!limit <1..300>`: set byte chunk limit for messages
   - `!voice <voice_id>`: set the default TTS voice (e.g., `!voice en_male_narration`)
@@ -32,18 +32,18 @@ Twitch chat -> TikTok TTS -> audio playback. Windows‑friendly, no native build
   - `!default_voice`: reset your personal voice to the default
   - Voice IDs must exist in the built‑in `tiktokVoices.json` list
 
-# Channel Point Redemptions
+### Channel Point Redemptions
 - When a user redeems a channel points reward, the bot fetches the reward title via Twitch Helix.
 - If the reward title matches a friendly voice name in `tiktokVoices.json`, that voice is used for the entire message (all chunks), regardless of the Read All toggle.
 - Required scope: `channel:read:redemptions` (granted automatically when you authorize in the app).
 
-# Behavior Notes
+### Behavior Notes
 - Messages never overlap: the bot queues messages and plays them in order.
 - Minimal delay: while one message plays, the next is generated in parallel.
 - The Read All toggle applies live. Redemptions always read. Admin/voice commands are handled but not spoken unless you enable command reading.
 - Logs: click “Show Logs” to reveal; click again to hide.
 
-# Troubleshooting
+### Troubleshooting
 - “Authorize” stays gray or missing scopes: click Authorize again and consent; force verify is enabled. Ensure you log in as the channel broadcaster.
 - No sound: verify Windows audio isn’t muted; try a different voice; check Logs.
 - App won’t launch or is blank: see startup log at `%APPDATA%/Twitch TTS Reader/startup.log` and reinstall the latest release.
