@@ -38,6 +38,13 @@
     },
     "win": {
       "target": ["nsis"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Twitch TTS Reader"
     }
   },
     "dependencies": {

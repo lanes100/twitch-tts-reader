@@ -7,6 +7,9 @@ const express = require('express');
 const fetch = require('node-fetch');
 const { spawn } = require('child_process');
 
+// Reduce cache-related errors on Windows (disable GPU shader disk cache)
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
 const STARTUP_LOG = path.join(app.getPath('userData'), 'startup.log');
 
@@ -182,7 +185,21 @@ function stopBot() {
   try { botChild.kill('SIGINT'); } catch {}
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  try {
+    // Ensure userData and cache dirs exist and are writable
+    const userData = app.getPath('userData');
+    fs.mkdirSync(userData, { recursive: true });
+    const cacheDir = path.join(userData, 'Cache');
+    fs.mkdirSync(cacheDir, { recursive: true });
+    app.setPath('cache', cacheDir);
+    logStartup(`UserData at: ${userData}`);
+    logStartup(`Cache at: ${cacheDir}`);
+  } catch (e) {
+    logStartup('Failed to ensure userData/cache dirs', e);
+  }
+  return createWindow();
+});
 app.whenReady().then(() => logStartup('App ready')).catch(e => logStartup('App ready error', e));
 
 app.on('window-all-closed', () => {
