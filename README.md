@@ -2,14 +2,14 @@
 
 Twitch chat -> TikTok TTS -> audio playback. Windows‑friendly, no native builds.
 
-End‑User Quick Start (Recommended)
+## End‑User Quick Start (Recommended)
 - Create a Twitch Application
-  1. Go to https://dev.twitch.tv/console/apps and click “Register Your Application”.
-  2. Name: anything (e.g., "TTS Reader").
-  3. OAuth Redirect URL: `http://localhost:5173/callback`
-  4. Category: Website Integration.
-  5. After creating, open the app to copy the `Client ID` and generate a `Client Secret`.
-  6. Scopes required: `chat:read chat:edit`.
+    1. Go to https://dev.twitch.tv/console/apps and click “Register Your Application”.
+    2. Name: anything (e.g., "TTS Reader").
+    3. OAuth Redirect URL: `http://localhost:5173/callback`
+    4. Category: Website Integration.
+    5. After creating, open the app to copy the `Client ID` and generate a `Client Secret`.
+    6. Scopes required: `chat:read chat:edit`.
 - Download the latest Windows installer from GitHub Releases (Twitch TTS Reader Setup x.y.z.exe).
 - Run the installer
 - Open “Twitch TTS Reader”. In the window:
