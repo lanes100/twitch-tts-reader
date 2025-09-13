@@ -12,17 +12,17 @@ End‑User Quick Start (Recommended)
   4. Category: Website Integration.
   5. After creating, open the app to copy the `Client ID` and generate a `Client Secret`.
   6. Scopes required: `chat:read chat:edit`.
-  - Download the latest Windows installer from GitHub Releases (Twitch TTS Reader Setup x.y.z.exe).
-  - Run the installer
-  - Open “Twitch TTS Reader”. In the window:
-  - Fill Twitch Username and Channel (no #)
-  - Paste your Twitch Client ID and Secret (from Twitch Dev Console)
-  - Keep Redirect URL as `http://localhost:5173/callback` unless you changed it in the app settings on Twitch
-  - Choose a Voice from the dropdown (friendly names from tiktokVoices.json)
-  - Optional: toggle “Read All Messages” if you want every message read aloud (you can change this live while streaming). Channel point redemptions are always read.
-  - Click “Authorize”. The button turns green and reads “Authorized as @username” when successful.
-  - Click “Start Bot” (button turns green while running). Logs are hidden by default—click “Show Logs” to view.
-  - Dark mode is default. Toggle View → Dark Mode to switch.
+- Download the latest Windows installer from GitHub Releases (Twitch TTS Reader Setup x.y.z.exe).
+- Run the installer
+- Open “Twitch TTS Reader”. In the window:
+- Fill Twitch Username and Channel (no #)
+- Paste your Twitch Client ID and Secret (from Twitch Dev Console)
+- Keep Redirect URL as `http://localhost:5173/callback` unless you changed it in the app settings on Twitch
+- Choose a Voice from the dropdown (friendly names from tiktokVoices.json)
+- Optional: toggle “Read All Messages” if you want every message read aloud (you can change this live while streaming). Channel point redemptions are always read.
+- Click “Authorize”. The button turns green and reads “Authorized as @username” when successful.
+- Click “Start Bot” (button turns green while running). Logs are hidden by default—click “Show Logs” to view.
+- Dark mode is default. Toggle View → Dark Mode to switch.
 
 In‑Chat Commands
 - Broadcaster/mods:
