@@ -1,0 +1,278 @@
+const ffmpegPath = require('ffmpeg-static');
+const wavPlayer = require('node-wav-player');
+const { spawn } = require('child_process');
+const os = require('os');
+const fs = require('fs');
+const path = require('path');
+
+require('dotenv').config();
+const tmi = require('tmi.js');
+const fetch = require('node-fetch');        // v2 (CommonJS)
+const { TextEncoder } = require('util');
+
+// --------- ENV & Defaults ----------
+function clampInt(str, min, max, fallback) {
+  const n = Number.parseInt(String(str), 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+const TWITCH_USERNAME = process.env.TWITCH_USERNAME || '';
+const TWITCH_CHANNEL  = process.env.TWITCH_CHANNEL  || '';
+const TWITCH_OAUTH    = process.env.TWITCH_OAUTH    || '';
+const TTS_ENDPOINT    = process.env.TTS_ENDPOINT || 'https://tiktok-tts.weilnet.workers.dev';
+let TTS_VOICE         = process.env.TTS_VOICE || 'en_male_narration';
+const READ_COMMANDS   = (process.env.READ_COMMANDS || 'false').toLowerCase() === 'true';
+const SELF_READ       = (process.env.SELF_READ || 'false').toLowerCase() === 'true';
+
+// Optional: Twitch OAuth refresh (prevents mid-stream auth issues)
+const TWITCH_CLIENT_ID     = process.env.TWITCH_CLIENT_ID || '';
+const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET || '';
+let   TWITCH_REFRESH_TOKEN = process.env.TWITCH_REFRESH_TOKEN || '';
+
+const BYTE_LIMIT_BASE = clampInt(process.env.BYTE_LIMIT, 1, 300, 300);
+// Runtime-adjustable (via !limit); starts at env value:
+let BYTE_LIMIT = BYTE_LIMIT_BASE;
+
+if (!TWITCH_USERNAME || !TWITCH_CHANNEL || !TWITCH_OAUTH) {
+  console.error('Missing env vars: set TWITCH_USERNAME, TWITCH_CHANNEL, TWITCH_OAUTH');
+  process.exit(1);
+}
+
+const enc = new TextEncoder();
+
+// --------- Queue & Chunking ----------
+const queue = [];
+let playing = false;
+
+// Split to <= byteLimit bytes on word boundaries (emoji/CJK safe)
+function splitToUtf8WordChunks(text, byteLimit = 300) {
+  const chunks = [];
+  let remaining = text.trim();
+  while (remaining.length) {
+    if (enc.encode(remaining).length <= byteLimit) {
+      chunks.push(remaining);
+      break;
+    }
+    const cps = Array.from(remaining); // code points
+    // binary search for max-fit prefix
+    let lo = 1, hi = cps.length, fit = 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const slice = cps.slice(0, mid).join('');
+      const bytes = enc.encode(slice).length;
+      if (bytes <= byteLimit) { fit = mid; lo = mid + 1; }
+      else { hi = mid - 1; }
+    }
+    let candidate = cps.slice(0, fit);
+    // back to last whitespace to keep whole words
+    let boundary = -1;
+    for (let i = candidate.length - 1; i >= 0; i--) {
+      if (/\s/.test(candidate[i])) { boundary = i; break; }
+    }
+    if (boundary > 0) candidate = candidate.slice(0, boundary);
+    if (!candidate.length) candidate = cps.slice(0, fit); // fallback
+
+    const chunk = candidate.join('').trim();
+    if (chunk) chunks.push(chunk);
+    remaining = cps.slice(candidate.length).join('').trim();
+  }
+  return chunks;
+}
+
+function enqueue(text) {
+  const parts = splitToUtf8WordChunks(text, BYTE_LIMIT);
+  for (const p of parts) queue.push(p);
+  if (!playing) drainQueue();
+}
+
+async function drainQueue() {
+  playing = true;
+  while (queue.length) {
+    const msg = queue.shift();
+    try {
+      await ttsToSpeaker(msg);
+      await new Promise(r => setTimeout(r, 150)); // small gap
+    } catch (e) {
+      console.error(e?.message || e);
+    }
+  }
+  playing = false;
+}
+
+// --------- TTS & Playback ----------
+async function ttsToSpeaker(text) {
+  if (!text) return;
+
+  const res = await fetch(`${TTS_ENDPOINT}/api/generation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voice: TTS_VOICE }),
+  });
+
+  let json;
+  try {
+    json = await res.json();
+  } catch (e) {
+    throw new Error(`TTS failed: HTTP ${res.status}`);
+  }
+  if (!res.ok || !json?.data) {
+    const err = json?.error || `HTTP ${res.status}`;
+    throw new Error(`TTS failed: ${err}`);
+  }
+
+  const mp3Buf = Buffer.from(json.data, 'base64');
+
+  // Convert MP3 -> WAV (temp file) with ffmpeg-static
+  const wavPath = path.join(
+    os.tmpdir(),
+    `tts-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`
+  );
+
+  await new Promise((resolve, reject) => {
+    const ff = spawn(ffmpegPath, [
+      '-loglevel', 'error',
+      '-y',
+      '-f', 'mp3',
+      '-i', 'pipe:0',
+      '-f', 'wav',
+      '-ar', '48000',
+      '-ac', '2',
+      wavPath
+    ], { stdio: ['pipe', 'inherit', 'inherit'] });
+
+    ff.on('error', reject);
+    ff.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`)));
+    ff.stdin.end(mp3Buf);
+  });
+
+  try {
+    // Plays and resolves when playback completes
+    await wavPlayer.play({ path: wavPath });
+  } finally {
+    fs.unlink(wavPath, () => {});
+  }
+}
+
+// --------- Twitch Client ----------
+const client = new tmi.Client({
+  options: { debug: false },
+  connection: { reconnect: true, secure: true },
+  identity: { username: TWITCH_USERNAME, password: TWITCH_OAUTH },
+  channels: [`#${TWITCH_CHANNEL}`],
+});
+
+client.on('connected', (addr, port) => {
+  console.log(`Connected to Twitch at ${addr}:${port}, listening in #${TWITCH_CHANNEL}`);
+  console.log(`TTS voice: ${TTS_VOICE} | Byte limit: ${BYTE_LIMIT}`);
+});
+
+let triedRefreshReconnect = false;
+client.on('disconnected', async (reason) => {
+  console.warn('Disconnected:', reason);
+  if (!triedRefreshReconnect && TWITCH_CLIENT_ID && TWITCH_CLIENT_SECRET && TWITCH_REFRESH_TOKEN) {
+    triedRefreshReconnect = true;
+    try {
+      await refreshAccessToken();
+      // Update client identity for next connect
+      client.opts.identity.password = process.env.TWITCH_OAUTH;
+      console.log('Reconnecting after token refresh...');
+      await client.connect();
+      triedRefreshReconnect = false; // reset on success
+    } catch (e) {
+      console.warn('Auto-refresh reconnect failed:', e?.message || e);
+    }
+  }
+});
+
+client.on('message', (channel, tags, message, self) => {
+  const isBroadcaster = !!tags.badges?.broadcaster;
+  const isMod = !!tags.mod || isBroadcaster;
+
+  // Owner/mod runtime commands
+  const cmdMatch = message.match(/^!(limit|voice)\s+(.+)$/i);
+  if (cmdMatch && isMod) {
+    const [, cmd, arg] = cmdMatch;
+    if (/^limit$/i.test(cmd)) {
+      const newLimit = clampInt(arg, 1, 300, BYTE_LIMIT);
+      BYTE_LIMIT = newLimit;
+      client.say(channel, `Byte limit set to ${BYTE_LIMIT}.`);
+      return;
+    }
+    if (/^voice$/i.test(cmd)) {
+      // trust user input; you can validate against a whitelist if you like
+      TTS_VOICE = arg.trim();
+      client.say(channel, `Voice set to ${TTS_VOICE}.`);
+      return;
+    }
+  }
+
+  if (self && !SELF_READ) return;
+
+  const trimmed = message.trim();
+  if (!trimmed) return;
+
+  const isCommand = trimmed.startsWith('!');
+  if (isCommand && !READ_COMMANDS) return;
+
+  // Normalize whitespace
+  const clean = trimmed.replace(/\s+/g, ' ');
+  enqueue(clean);
+});
+
+client.connect().catch(err => {
+  console.error('Twitch connect error:', err);
+  process.exit(1);
+});
+
+// --------- Token Auto-Refresh (background) ----------
+function upsertEnv(vars) {
+  try {
+    const envPath = path.resolve(process.cwd(), '.env');
+    let content = '';
+    try { content = fs.readFileSync(envPath, 'utf8'); } catch { /* new file */ }
+    const lines = content.split(/\r?\n/);
+    for (const [key, value] of Object.entries(vars)) {
+      const re = new RegExp(`^${key}=.*$`, 'm');
+      if (re.test(content)) content = content.replace(re, `${key}=${value}`);
+      else { lines.push(`${key}=${value}`); content = lines.filter(Boolean).join('\n') + '\n'; }
+    }
+    fs.writeFileSync(envPath, content, 'utf8');
+  } catch (e) {
+    console.warn('Failed to persist updated .env tokens:', e?.message || e);
+  }
+}
+
+async function refreshAccessToken() {
+  if (!TWITCH_CLIENT_ID || !TWITCH_CLIENT_SECRET || !TWITCH_REFRESH_TOKEN) return;
+  const url = 'https://id.twitch.tv/oauth2/token';
+  const params = new URLSearchParams();
+  params.set('client_id', TWITCH_CLIENT_ID);
+  params.set('client_secret', TWITCH_CLIENT_SECRET);
+  params.set('grant_type', 'refresh_token');
+  params.set('refresh_token', TWITCH_REFRESH_TOKEN);
+
+  const res = await fetch(url, { method: 'POST', body: params });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Refresh failed (${res.status}): ${text}`);
+
+  const data = JSON.parse(text);
+  const access = data.access_token;
+  TWITCH_REFRESH_TOKEN = data.refresh_token || TWITCH_REFRESH_TOKEN;
+
+  const newOauth = `oauth:${access}`;
+  process.env.TWITCH_OAUTH = newOauth;
+  process.env.TWITCH_REFRESH_TOKEN = TWITCH_REFRESH_TOKEN;
+  upsertEnv({ TWITCH_OAUTH: newOauth, TWITCH_REFRESH_TOKEN });
+  console.log('Access token refreshed.');
+}
+
+// Proactive refresh every ~3 hours to avoid expiry (~4h)
+if (TWITCH_CLIENT_ID && TWITCH_CLIENT_SECRET && TWITCH_REFRESH_TOKEN) {
+  const THREE_HOURS = 3 * 60 * 60 * 1000;
+  setInterval(() => {
+    refreshAccessToken().catch(e => console.warn('Background refresh failed:', e?.message || e));
+    // Do not force reconnect; token is used on next connect
+    client.opts.identity.password = process.env.TWITCH_OAUTH;
+  }, THREE_HOURS).unref?.();
+}
