@@ -219,3 +219,13 @@ Notes
 - Code signing: if you have a code signing cert, configure it per electron‑builder docs (env vars on the runner) to avoid SmartScreen warnings.
 - Cache: electron caches downloads between runs; Node modules are cached via setup-node.
 - Artifacts: you can also upload the unpacked `dist/win-unpacked` for portable usage.
+
+## Acknowledgements
+- TikTok TTS Cloudflare Worker by Weilbyte — the default endpoint used here
+  - GitHub: https://github.com/Weilbyte/TikTok-Voice
+  - Endpoint default: `https://tiktok-tts.weilnet.workers.dev`
+- Libraries
+  - tmi.js (Twitch IRC)
+  - electron / electron-builder
+  - ffmpeg-static
+  - node-wav-player
