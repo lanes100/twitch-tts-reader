@@ -20,6 +20,7 @@
   "build": {
     "appId": "com.example.twitchttsreader",
     "productName": "Twitch TTS Reader",
+    "publish": "never",
     "files": [
       "index.js",
       "auth.js",
