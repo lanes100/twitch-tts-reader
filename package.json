@@ -11,7 +11,8 @@
     "voice:validate": "node tools/validate-voice.js",
     "voice:validate:all": "node tools/validate-voice.js --all",
     "dev:electron": "electron electron/main.js",
-    "build:electron": "electron-builder -w"
+    "build:electron": "electron-builder -w",
+    "build:electron:local": "powershell -NoLogo -NoProfile -Command \"$env:ELECTRON_BUILDER_DISABLE_CODE_SIGNING='true'; $env:CSC_IDENTITY_AUTO_DISCOVERY='false'; Remove-Item -Recurse -Force \"$env:LOCALAPPDATA\\electron-builder\\Cache\\winCodeSign\" -ErrorAction SilentlyContinue; electron-builder -w -p never\""
   },
   "devDependencies": {
     "electron": "^30.0.0",
@@ -37,7 +38,8 @@
       "buildResources": "build"
     },
     "win": {
-      "target": ["nsis"]
+      "target": ["nsis"],
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,

@@ -1,8 +1,52 @@
 # Twitch TTS Reader
 
-Twitch chat -> TikTok TTS -> audio playback, Windows‑friendly and zero native build.
+Twitch chat -> TikTok TTS -> audio playback. Windows‑friendly, no native builds.
 
-Use it as a one‑click Electron app (recommended) or as a CLI. No node‑gyp, no native speaker bindings. Uses `ffmpeg-static` to convert MP3 to WAV and `node-wav-player` for playback.
+—
+
+End‑User Quick Start (Recommended)
+- Download the latest Windows installer from GitHub Releases (Twitch TTS Reader Setup x.y.z.exe).
+- Run the installer:
+  - Choose install directory
+  - Keep “Create Desktop Shortcut” checked (default) if you want a desktop icon
+- Open “Twitch TTS Reader”. In the window:
+  - Fill Twitch Username and Channel (no #)
+  - Paste your Twitch Client ID and Secret (from Twitch Dev Console)
+  - Keep Redirect URL as `http://localhost:5173/callback` unless you changed it in the app settings on Twitch
+  - Choose a Voice from the dropdown (friendly names from tiktokVoices.json)
+  - Optional: toggle “Read All Messages” if you want every message read aloud (you can change this live while streaming). Channel point redemptions are always read.
+  - Click “Authorize”. The button turns green and reads “Authorized as @username” when successful.
+  - Click “Start Bot” (button turns green while running). Logs are hidden by default—click “Show Logs” to view.
+  - Dark mode is default. Toggle View → Dark Mode to switch.
+
+In‑Chat Commands
+- Broadcaster/mods:
+  - `!limit <1..300>`: set byte chunk limit for messages
+  - `!voice <voice_id>`: set the default TTS voice (e.g., `!voice en_male_narration`)
+- Subscribers and mods (per‑user voice):
+  - `!myvoice <voice_id>`: set your personal voice
+  - `!<voice_id>`: shorthand, e.g., `!en_au_002`
+  - `!default_voice`: reset your personal voice to the default
+  - Voice IDs must exist in the built‑in `tiktokVoices.json` list
+
+Channel Point Redemptions
+- When a user redeems a channel points reward, the bot fetches the reward title via Twitch Helix.
+- If the reward title matches a friendly voice name in `tiktokVoices.json`, that voice is used for the entire message (all chunks), regardless of the Read All toggle.
+- Required scope: `channel:read:redemptions` (granted automatically when you authorize in the app).
+
+Behavior Notes
+- Messages never overlap: the bot queues messages and plays them in order.
+- Minimal delay: while one message plays, the next is generated in parallel.
+- The Read All toggle applies live. Redemptions always read. Admin/voice commands are handled but not spoken unless you enable command reading.
+- Logs: click “Show Logs” to reveal; click again to hide.
+
+Troubleshooting
+- “Authorize” stays gray or missing scopes: click Authorize again and consent; force verify is enabled. Ensure you log in as the channel broadcaster.
+- No sound: verify Windows audio isn’t muted; try a different voice; check Logs.
+- App won’t launch or is blank: see startup log at `%APPDATA%/Twitch TTS Reader/startup.log` and reinstall the latest release.
+- Installer runs but app won’t start: download a fresh installer from Releases.
+
+—
 
 ## Features
 - UTF‑8 byte‑aware message chunking (≤300 bytes, emoji/CJK safe)
@@ -33,11 +77,8 @@ You can change the redirect port/URL later; if you do, keep the app settings and
    - `npm install`
 2. Create your env file:
    - `cp .env.example .env`
-Electron app (recommended)
-- Dev run: `npm run dev:electron`
-- Fill in: Twitch Username, Channel, Client ID/Secret, Redirect URL (defaults to `http://localhost:5173/callback`), optional Helix Client ID override, TTS Endpoint, and Voice.
-- Click “Authorize” and log in as the broadcaster. The button turns green and displays “Authorized as @username” when OK. Scopes are enforced: `chat:read chat:edit channel:read:redemptions`.
-- Click “Start Bot” (turns green for running; red when stopped). Logs are hidden by default — use “Show Logs”. Dark mode is default; toggle in View → Dark Mode.
+Electron app (recommended for end users)
+- See the “End‑User Quick Start” at the top of this README.
 
 CLI (optional, advanced)
 1. Copy env: `cp .env.example .env`
@@ -75,6 +116,11 @@ On connect, it will join `#<TWITCH_CHANNEL>` and speak incoming chat messages ac
 ### Chat Commands (mods/broadcaster)
 - `!limit <n>` — set the UTF‑8 byte chunk size (1..300)
 - `!voice <voice_id>` — set the TikTok voice ID at runtime
+
+### Per‑User Voices (subs/mods)
+- `!myvoice <voice_id>` — set your personal voice
+- `!<voice_id>` — shorthand, e.g., `!en_au_002`
+- `!default_voice` — reset your personal voice to the default
 
 ## Voices
 - Default voice: `en_male_narration`

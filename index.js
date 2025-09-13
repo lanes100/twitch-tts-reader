@@ -1,4 +1,8 @@
-const ffmpegPath = require('ffmpeg-static');
+// Resolve ffmpeg path; fix asar path when packaged under Electron
+const _ffmpegPath = require('ffmpeg-static');
+const ffmpegPath = _ffmpegPath && _ffmpegPath.includes('app.asar')
+  ? _ffmpegPath.replace('app.asar', 'app.asar.unpacked')
+  : _ffmpegPath;
 const wavPlayer = require('node-wav-player');
 const { spawn } = require('child_process');
 const os = require('os');
@@ -22,9 +26,11 @@ const TWITCH_CHANNEL  = process.env.TWITCH_CHANNEL  || '';
 const TWITCH_OAUTH    = process.env.TWITCH_OAUTH    || '';
 const TTS_ENDPOINT    = process.env.TTS_ENDPOINT || 'https://tiktok-tts.weilnet.workers.dev';
 let TTS_VOICE         = process.env.TTS_VOICE || 'en_male_narration';
+const VOICES_DOC_URL  = process.env.VOICES_DOC_URL || 'https://github.com/your-org/your-repo/blob/main/docs/voices.md';
 const READ_COMMANDS   = (process.env.READ_COMMANDS || 'false').toLowerCase() === 'true';
 const SELF_READ       = (process.env.SELF_READ || 'false').toLowerCase() === 'true';
 const WRITE_ENV_FILE  = (process.env.WRITE_ENV_FILE || 'true').toLowerCase() !== 'false';
+let READ_ALL          = (process.env.READ_ALL || 'true').toLowerCase() === 'true';
 
 // Optional: Twitch OAuth refresh (prevents mid-stream auth issues)
 const TWITCH_CLIENT_ID     = process.env.TWITCH_CLIENT_ID || '';
@@ -60,6 +66,10 @@ if (APP_CONFIG_PATH) {
           // Optional: log change
           console.log(`Voice updated to ${TTS_VOICE}`);
         }
+        if (cfg && typeof cfg.READ_ALL !== 'undefined') {
+          const v = (String(cfg.READ_ALL).toLowerCase() === 'true');
+          READ_ALL = v;
+        }
       } catch {}
     };
     applyCfg();
@@ -72,6 +82,7 @@ if (APP_CONFIG_PATH) {
 
 // --------- Voice Resolver (Reward -> Voice) ----------
 let voicesIndexByName = new Map(); // lowercased friendly name -> voice_id
+let voicesIdSet = new Set();       // set of valid voice_id values
 const rewardTitleCache = new Map(); // reward_id -> reward title (friendly name)
 
 function loadVoicesJson() {
@@ -85,10 +96,13 @@ function loadVoicesJson() {
         const arr = JSON.parse(fs.readFileSync(p, 'utf8'));
         if (Array.isArray(arr)) {
           const map = new Map();
+          const ids = new Set();
           for (const v of arr) {
             if (v && v.name && v.voice_id) map.set(String(v.name).toLowerCase(), String(v.voice_id));
+            if (v && v.voice_id) ids.add(String(v.voice_id));
           }
           voicesIndexByName = map;
+          voicesIdSet = ids;
           return;
         }
       }
@@ -140,6 +154,30 @@ async function resolveVoiceFromRewardId(rewardId, broadcasterId) {
 loadVoicesJson();
 try { fs.watch(path.resolve(process.cwd(), 'tiktokVoices.json'), { persistent: false }, () => loadVoicesJson()); } catch {}
 
+// --------- Per-User Voice Preferences ----------
+const USER_VOICES_PATH = (() => {
+  const base = process.env.APP_CONFIG_PATH ? path.dirname(process.env.APP_CONFIG_PATH) : process.cwd();
+  return path.join(base, 'userVoices.json');
+})();
+
+let userVoices = {};
+function loadUserVoices() {
+  try {
+    if (fs.existsSync(USER_VOICES_PATH)) {
+      const obj = JSON.parse(fs.readFileSync(USER_VOICES_PATH, 'utf8'));
+      if (obj && typeof obj === 'object') userVoices = obj;
+    }
+  } catch {}
+}
+function saveUserVoices() {
+  try {
+    fs.writeFileSync(USER_VOICES_PATH, JSON.stringify(userVoices, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('Failed to save user voices:', e?.message || e);
+  }
+}
+loadUserVoices();
+
 // Split to <= byteLimit bytes on word boundaries (emoji/CJK safe)
 function splitToUtf8WordChunks(text, byteLimit = 300) {
   const chunks = [];
@@ -183,47 +221,46 @@ function enqueue(text, voiceOverride) {
 
 async function drainQueue() {
   playing = true;
-  while (queue.length) {
-    const item = queue.shift();
-    try {
-      await ttsToSpeaker(item.text, item.voice || undefined);
-      await new Promise(r => setTimeout(r, 150)); // small gap
-    } catch (e) {
-      console.error(e?.message || e);
+  try {
+    if (!queue.length) return;
+    // Pipeline TTS generation for next item while current plays
+    let current = queue.shift();
+    let currentPromise = synthToWav(current.text, current.voice || undefined);
+    while (true) {
+      const next = queue.shift();
+      const nextPromise = next ? synthToWav(next.text, next.voice || undefined) : null;
+      const wavPath = await currentPromise;
+      await playWav(wavPath);
+      if (!nextPromise) break;
+      currentPromise = nextPromise;
     }
+  } catch (e) {
+    console.error(e?.message || e);
+  } finally {
+    playing = false;
+    // If new items arrived during playback, continue draining
+    if (queue.length) drainQueue();
   }
-  playing = false;
 }
 
 // --------- TTS & Playback ----------
-async function ttsToSpeaker(text, voiceOverride) {
-  if (!text) return;
-
+async function synthToWav(text, voiceOverride) {
+  if (!text) throw new Error('Empty text');
   const res = await fetch(`${TTS_ENDPOINT}/api/generation`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, voice: voiceOverride || TTS_VOICE }),
   });
-
   let json;
-  try {
-    json = await res.json();
-  } catch (e) {
+  try { json = await res.json(); } catch {
     throw new Error(`TTS failed: HTTP ${res.status}`);
   }
   if (!res.ok || !json?.data) {
     const err = json?.error || `HTTP ${res.status}`;
     throw new Error(`TTS failed: ${err}`);
   }
-
   const mp3Buf = Buffer.from(json.data, 'base64');
-
-  // Convert MP3 -> WAV (temp file) with ffmpeg-static
-  const wavPath = path.join(
-    os.tmpdir(),
-    `tts-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`
-  );
-
+  const wavPath = path.join(os.tmpdir(), `tts-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
   await new Promise((resolve, reject) => {
     const ff = spawn(ffmpegPath, [
       '-loglevel', 'error',
@@ -235,18 +272,69 @@ async function ttsToSpeaker(text, voiceOverride) {
       '-ac', '2',
       wavPath
     ], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
-
     ff.on('error', reject);
     ff.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`)));
     ff.stdin.end(mp3Buf);
   });
+  return wavPath;
+}
 
+async function playWav(wavPath) {
   try {
-    // Plays and resolves when playback completes
-    await wavPlayer.play({ path: wavPath });
+    if (process.platform === 'win32') {
+      await playWavWindowsBlocking(wavPath);
+    } else {
+      await wavPlayer.play({ path: wavPath });
+    }
   } finally {
     fs.unlink(wavPath, () => {});
   }
+}
+
+// Persistent PowerShell player to minimize per-message overhead on Windows
+let psPlayer = null;
+let psPending = [];
+let psBuf = '';
+function ensurePsPlayer() {
+  if (psPlayer && !psPlayer.killed) return;
+  const psScript = "$reader = [Console]::In; while (($line = $reader.ReadLine()) -ne $null) { if (-not [string]::IsNullOrWhiteSpace($line)) { try { $p = New-Object System.Media.SoundPlayer $line; $p.PlaySync(); Write-Output 'DONE' } catch { Write-Output ('ERR:' + $_.Exception.Message) } } }";
+  psPlayer = spawn('powershell.exe', ['-NoLogo','-NoProfile','-Command', psScript], { stdio: ['pipe','pipe','pipe'], windowsHide: true });
+  psPlayer.on('error', (e) => {
+    const q = psPending;
+    psPending = [];
+    q.forEach(p => p.reject(e));
+  });
+  psPlayer.stdout.on('data', (d) => {
+    psBuf += d.toString();
+    let idx;
+    while ((idx = psBuf.indexOf('\n')) !== -1) {
+      const line = psBuf.slice(0, idx).trim();
+      psBuf = psBuf.slice(idx + 1);
+      if (!psPending.length) continue;
+      const { resolve, reject } = psPending.shift();
+      if (line === 'DONE') resolve();
+      else if (line.startsWith('ERR:')) reject(new Error(line.slice(4)));
+      else resolve();
+    }
+  });
+  psPlayer.stderr.on('data', () => { /* ignore */ });
+  psPlayer.on('close', () => {
+    const q = psPending; psPending = [];
+    q.forEach(p => p.reject(new Error('PowerShell player closed')));
+  });
+}
+
+function playWavWindowsBlocking(wavPath) {
+  ensurePsPlayer();
+  return new Promise((resolve, reject) => {
+    psPending.push({ resolve, reject });
+    try {
+      psPlayer.stdin.write(wavPath + '\n');
+    } catch (e) {
+      psPending.pop();
+      reject(e);
+    }
+  });
 }
 
 // --------- Twitch Client ----------
@@ -283,6 +371,7 @@ client.on('disconnected', async (reason) => {
 client.on('message', async (channel, tags, message, self) => {
   const isBroadcaster = !!tags.badges?.broadcaster;
   const isMod = !!tags.mod || isBroadcaster;
+  const isSub = tags.subscriber === true || tags.subscriber === '1' || tags.badges?.subscriber;
 
   // Owner/mod runtime commands
   const cmdMatch = message.match(/^!(limit|voice)\s+(.+)$/i);
@@ -302,12 +391,57 @@ client.on('message', async (channel, tags, message, self) => {
     }
   }
 
+  // Subscriber/Mod per-user voice commands
+  const myVoiceMatch = message.match(/^!(myvoice)\s+(\S+)$/i);
+  if (myVoiceMatch && (isMod || isSub)) {
+    const [, , voiceIdRaw] = myVoiceMatch;
+    const voiceId = voiceIdRaw.trim();
+    if (voicesIdSet.size && !voicesIdSet.has(voiceId)) {
+      client.say(channel, `@${tags['display-name'] || tags.username}, unknown voice id.`);
+      return;
+    }
+    const uid = String(tags['user-id'] || tags.username);
+    userVoices[uid] = voiceId;
+    saveUserVoices();
+    client.say(channel, `@${tags['display-name'] || tags.username}, your voice is now ${voiceId}.`);
+    return;
+  }
+  // Shorthand: !<voice_id> (e.g., !en_au_002)
+  const directVoiceMatch = message.match(/^!([A-Za-z0-9_]+)$/);
+  if (directVoiceMatch && (isMod || isSub)) {
+    const voiceId = directVoiceMatch[1];
+    if (voicesIdSet.size && !voicesIdSet.has(voiceId)) {
+      client.say(channel, `@${tags['display-name'] || tags.username}, unknown voice id.`);
+      return;
+    }
+    const uid = String(tags['user-id'] || tags.username);
+    userVoices[uid] = voiceId;
+    saveUserVoices();
+    client.say(channel, `@${tags['display-name'] || tags.username}, your voice is now ${voiceId}.`);
+    return;
+  }
+  const resetMatch = message.match(/^!(?:default[_\s]*voice|reset[_\s]*voice|default)$/i);
+  if (resetMatch && (isMod || isSub)) {
+    const uid = String(tags['user-id'] || tags.username);
+    if (userVoices[uid]) {
+      delete userVoices[uid];
+      saveUserVoices();
+    }
+    client.say(channel, `@${tags['display-name'] || tags.username}, your voice has been reset.`);
+    return;
+  }
+
   if (self && !SELF_READ) return;
 
   const trimmed = message.trim();
   if (!trimmed) return;
 
   const isCommand = trimmed.startsWith('!');
+  // Public command: link to voices doc
+  if (/^!voices\b/i.test(trimmed)) {
+    client.say(channel, `Voice list and instructions: ${VOICES_DOC_URL}`);
+    return;
+  }
   if (isCommand && !READ_COMMANDS) return;
 
   // Normalize whitespace
@@ -318,6 +452,12 @@ client.on('message', async (channel, tags, message, self) => {
   if (rewardId) {
     const broadcasterId = tags['room-id'];
     voiceOverride = await resolveVoiceFromRewardId(rewardId, broadcasterId);
+  }
+  // Respect READ_ALL toggle: if not a redemption and not READ_ALL, skip reading
+  if (!rewardId && !READ_ALL) return;
+  if (!voiceOverride) {
+    const uid = String(tags['user-id'] || tags.username);
+    if (uid && userVoices[uid]) voiceOverride = userVoices[uid];
   }
   enqueue(clean, voiceOverride);
 });

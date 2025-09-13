@@ -172,8 +172,13 @@ function startBot(cfg) {
     TWITCH_USERNAME: envUser,
     TWITCH_CHANNEL: envChannel,
     TWITCH_OAUTH: envPass,
+    ELECTRON_RUN_AS_NODE: '1',
   };
-  botChild = spawn(process.execPath, [path.join(process.cwd(), 'index.js')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  // Resolve bot entry for both dev (electron/main.js) and packaged (app.asar) runs
+  let indexPath = path.join(app.getAppPath(), 'index.js');
+  if (!fs.existsSync(indexPath)) indexPath = path.join(__dirname, '..', 'index.js');
+  if (!fs.existsSync(indexPath)) indexPath = path.resolve(process.cwd(), 'index.js');
+  botChild = spawn(process.execPath, [indexPath], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   mainWindow?.webContents.send('bot:started');
   botChild.stdout.on('data', d => mainWindow?.webContents.send('bot:log', d.toString()));
   botChild.stderr.on('data', d => mainWindow?.webContents.send('bot:log', d.toString()));
