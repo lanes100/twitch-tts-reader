@@ -10,7 +10,7 @@ Twitch chat -> TikTok TTS -> audio playback. Windows‑friendly, no native build
     4. Category: Website Integration.
     5. After creating, open the app to copy the `Client ID` and generate a `Client Secret`.
     6. Scopes required: `chat:read chat:edit`.
-- Download the latest Windows installer from GitHub Releases (Twitch TTS Reader Setup x.y.z.exe).
+- Download the latest Windows installer from [GitHub Releases](https://github.com/lanes100/twitch-tts-reader/releases) (Twitch TTS Reader Setup x.y.z.exe).
 - Run the installer
 - Open “Twitch TTS Reader”. In the window:
 - Fill Twitch Username and Channel (no #)
