@@ -2,7 +2,7 @@
   "name": "twitch-tts-bot",
   "version": "1.0.0",
   "description": "Twitch chat -> TikTok TTS -> speaker",
-  "main": "index.js",
+  "main": "electron/main.js",
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
@@ -20,6 +20,9 @@
   "build": {
     "appId": "com.example.twitchttsreader",
     "productName": "Twitch TTS Reader",
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
     "files": [
       "index.js",
       "auth.js",

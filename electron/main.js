@@ -8,6 +8,14 @@ const fetch = require('node-fetch');
 const { spawn } = require('child_process');
 
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
+const STARTUP_LOG = path.join(app.getPath('userData'), 'startup.log');
+
+function logStartup(msg, err) {
+  try {
+    const line = `[${new Date().toISOString()}] ${msg}${err ? `\n${String(err.stack || err)}` : ''}\n`;
+    fs.appendFileSync(STARTUP_LOG, line, 'utf8');
+  } catch {}
+}
 
 function loadConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { return {}; }
@@ -23,6 +31,7 @@ let oauthServer = null;
 let currentTheme = 'dark';
 
 async function createWindow() {
+  logStartup('Creating BrowserWindow');
   mainWindow = new BrowserWindow({
     width: 1000,
     height: 720,
@@ -36,7 +45,13 @@ async function createWindow() {
   const cfg = loadConfig();
   currentTheme = cfg && cfg.theme ? cfg.theme : 'dark';
   buildMenu();
-  await mainWindow.loadFile(path.join(__dirname, 'renderer.html'));
+  try {
+    await mainWindow.loadFile(path.join(__dirname, 'renderer.html'));
+    logStartup('Loaded renderer.html');
+  } catch (e) {
+    logStartup('Failed to load renderer.html', e);
+    throw e;
+  }
 }
 
 function ensurePortFree(port) {
@@ -168,6 +183,7 @@ function stopBot() {
 }
 
 app.whenReady().then(createWindow);
+app.whenReady().then(() => logStartup('App ready')).catch(e => logStartup('App ready error', e));
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -269,3 +285,6 @@ function buildMenu() {
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 }
+
+process.on('uncaughtException', (e) => logStartup('UncaughtException', e));
+process.on('unhandledRejection', (e) => logStartup('UnhandledRejection', e));
