@@ -13,6 +13,7 @@
       .row label { justify-self: end; opacity: 0.9; }
       input:not([type='checkbox']), select { width: 100%; padding: 8px 10px; height: 36px; box-sizing: border-box; border-radius: 6px; border: 1px solid #2a2f36; background: #151a1f; color: #e6e6e6; transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease; }
       .checkbox-cell { justify-self: start; align-self: center; }
+      label.checkbox-inline { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
       body.light input, body.light select { background: #fff; color: #111; border-color: #ddd; }
       .btns { margin: 16px 0; }
       .btns button { margin-right:8px; padding: 8px 12px; border-radius: 6px; border: 1px solid #2a2f36; background: #1d232a; color: #e6e6e6; cursor: pointer; transition: background 0.1s ease, border-color 0.1s ease, transform 0.02s ease; }
@@ -61,7 +62,8 @@
         <select id="TTS_VOICE_SELECT"></select>
         <input id="TTS_VOICE" value="en_male_narration" style="display:none" />
       </div>
-      <div class="row"><label for="READ_ALL">Read All Messages</label><div class="checkbox-cell"><input id="READ_ALL" type="checkbox" checked /></div></div>
+      <div class="row"><div></div><div class="checkbox-cell"><label class="checkbox-inline"><input id="READ_ALL" type="checkbox" checked /> Read All Messages</label></div></div>
+      <div class="row"><div></div><div class="checkbox-cell"><label class="checkbox-inline"><input id="VOICE_PRIVILEGED_ONLY" type="checkbox" checked /> Restrict Voice Change to Subs, Mods, and VIP</label></div></div>
       <div class="row btns">
         <button id="save">Save</button>
         <button id="auth">Authorize</button>
@@ -79,7 +81,7 @@
       const fields = [
         'TWITCH_USERNAME','TWITCH_CHANNEL','TWITCH_CLIENT_ID','TWITCH_CLIENT_SECRET','TWITCH_REDIRECT_URL',
         'TWITCH_HELIX_CLIENT_ID',
-        'TTS_ENDPOINT','TTS_VOICE','READ_ALL',
+        'TTS_ENDPOINT','TTS_VOICE','READ_ALL','VOICE_PRIVILEGED_ONLY',
         'TWITCH_OAUTH','TWITCH_REFRESH_TOKEN'
       ];
 
@@ -192,6 +194,8 @@
       };
       const readAllEl = $('READ_ALL');
       if (readAllEl) readAllEl.onchange = async () => { await window.api.setConfig(readForm()); };
+      const privEl = $('VOICE_PRIVILEGED_ONLY');
+      if (privEl) privEl.onchange = async () => { await window.api.setConfig(readForm()); };
 
       function applyRunState(running) {
         const rt = $('runToggle');

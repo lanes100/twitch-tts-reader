@@ -37,7 +37,7 @@ async function createWindow() {
   logStartup('Creating BrowserWindow');
   mainWindow = new BrowserWindow({
     width: 1000,
-    height: 720,
+    height: 726,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

@@ -31,6 +31,7 @@ const READ_COMMANDS   = (process.env.READ_COMMANDS || 'false').toLowerCase() ===
 const SELF_READ       = (process.env.SELF_READ || 'false').toLowerCase() === 'true';
 const WRITE_ENV_FILE  = (process.env.WRITE_ENV_FILE || 'true').toLowerCase() !== 'false';
 let READ_ALL          = (process.env.READ_ALL || 'true').toLowerCase() === 'true';
+let VOICE_PRIVILEGED_ONLY = (process.env.VOICE_PRIVILEGED_ONLY || 'true').toLowerCase() === 'true';
 
 // Optional: Twitch OAuth refresh (prevents mid-stream auth issues)
 const TWITCH_CLIENT_ID     = process.env.TWITCH_CLIENT_ID || '';
@@ -69,6 +70,9 @@ if (APP_CONFIG_PATH) {
         if (cfg && typeof cfg.READ_ALL !== 'undefined') {
           const v = (String(cfg.READ_ALL).toLowerCase() === 'true');
           READ_ALL = v;
+        }
+        if (cfg && typeof cfg.VOICE_PRIVILEGED_ONLY !== 'undefined') {
+          VOICE_PRIVILEGED_ONLY = (String(cfg.VOICE_PRIVILEGED_ONLY).toLowerCase() === 'true');
         }
       } catch {}
     };
@@ -371,6 +375,8 @@ client.on('disconnected', async (reason) => {
 client.on('message', async (channel, tags, message, self) => {
   const isBroadcaster = !!tags.badges?.broadcaster;
   const isMod = !!tags.mod || isBroadcaster;
+  const isVip = !!(tags.badges && tags.badges.vip);
+  const canChangeVoice = (isMod || isSub || isVip) || !VOICE_PRIVILEGED_ONLY;
   const isSub = tags.subscriber === true || tags.subscriber === '1' || tags.badges?.subscriber;
 
   // Owner/mod runtime commands
@@ -393,7 +399,7 @@ client.on('message', async (channel, tags, message, self) => {
 
   // Subscriber/Mod per-user voice commands
   const myVoiceMatch = message.match(/^!(myvoice)\s+(\S+)$/i);
-  if (myVoiceMatch && (isMod || isSub)) {
+  if (myVoiceMatch && canChangeVoice) {
     const [, , voiceIdRaw] = myVoiceMatch;
     const voiceId = voiceIdRaw.trim();
     if (voicesIdSet.size && !voicesIdSet.has(voiceId)) {
@@ -408,7 +414,7 @@ client.on('message', async (channel, tags, message, self) => {
   }
   // Shorthand: !<voice_id> (e.g., !en_au_002)
   const directVoiceMatch = message.match(/^!([A-Za-z0-9_]+)$/);
-  if (directVoiceMatch && (isMod || isSub)) {
+  if (directVoiceMatch && canChangeVoice) {
     const voiceId = directVoiceMatch[1];
     if (voicesIdSet.size && !voicesIdSet.has(voiceId)) {
       client.say(channel, `@${tags['display-name'] || tags.username}, unknown voice id.`);
@@ -421,7 +427,7 @@ client.on('message', async (channel, tags, message, self) => {
     return;
   }
   const resetMatch = message.match(/^!(?:default[_\s]*voice|reset[_\s]*voice|default)$/i);
-  if (resetMatch && (isMod || isSub)) {
+  if (resetMatch && canChangeVoice) {
     const uid = String(tags['user-id'] || tags.username);
     if (userVoices[uid]) {
       delete userVoices[uid];
