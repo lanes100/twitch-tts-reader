@@ -1,6 +1,7 @@
 node_modules
 .env
 dist/
+codex_context.md
 
 # OS junk
 .DS_Store
