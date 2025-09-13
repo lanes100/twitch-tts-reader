@@ -14,6 +14,8 @@ const {
   TWITCH_REDIRECT_URL = 'http://localhost:5173/callback',
 } = process.env;
 
+const WRITE_ENV_FILE = (process.env.WRITE_ENV_FILE || 'true').toLowerCase() !== 'false';
+
 if (!TWITCH_CLIENT_ID || !TWITCH_CLIENT_SECRET) {
   console.error('Please set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET in .env');
   process.exit(1);
@@ -23,6 +25,7 @@ const PORT = new URL(TWITCH_REDIRECT_URL).port || 5173;
 const CALLBACK_PATH = new URL(TWITCH_REDIRECT_URL).pathname || '/callback';
 
 function upsertEnv(vars) {
+  if (!WRITE_ENV_FILE) return; // Respect no-write mode
   const envPath = path.resolve(process.cwd(), '.env');
   let content = '';
   try { content = fs.readFileSync(envPath, 'utf8'); } catch { /* new file */ }
@@ -132,14 +135,26 @@ async function start() {
       const refresh = data.refresh_token;
 
       // Write tokens to .env
-      upsertEnv({
+      const vars = {
         TWITCH_OAUTH: `oauth:${access}`,
         TWITCH_REFRESH_TOKEN: refresh || '',
-      });
+      };
+      // Always set in-memory values for this process
+      process.env.TWITCH_OAUTH = vars.TWITCH_OAUTH;
+      process.env.TWITCH_REFRESH_TOKEN = vars.TWITCH_REFRESH_TOKEN;
 
-      res.send(`<h2>Success!</h2><p>Your token was saved to <code>.env</code>.</p>
-        <p>You can close this tab and run your bot.</p>`);
-      console.log('Got access token and refresh token. Saved to .env.');
+      upsertEnv(vars);
+
+      if (WRITE_ENV_FILE) {
+        res.send(`<h2>Success!</h2><p>Your token was saved to <code>.env</code>.</p>
+          <p>You can close this tab and run your bot.</p>`);
+        console.log('Got access token and refresh token. Saved to .env.');
+      } else {
+        res.send(`<h2>Success!</h2>
+          <p>WRITE_ENV_FILE=false — not writing secrets to <code>.env</code>.</p>
+          <p>Please set <code>TWITCH_OAUTH</code> and <code>TWITCH_REFRESH_TOKEN</code> in your OS environment.</p>`);
+        console.log('Got access+refresh. Skipped .env write due to WRITE_ENV_FILE=false.');
+      }
     } catch (e) {
       console.error(e);
       res.status(500).send(`<h3>Exchange failed</h3><pre>${String(e.message || e)}</pre>`);

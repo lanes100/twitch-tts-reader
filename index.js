@@ -24,6 +24,7 @@ const TTS_ENDPOINT    = process.env.TTS_ENDPOINT || 'https://tiktok-tts.weilnet.
 let TTS_VOICE         = process.env.TTS_VOICE || 'en_male_narration';
 const READ_COMMANDS   = (process.env.READ_COMMANDS || 'false').toLowerCase() === 'true';
 const SELF_READ       = (process.env.SELF_READ || 'false').toLowerCase() === 'true';
+const WRITE_ENV_FILE  = (process.env.WRITE_ENV_FILE || 'true').toLowerCase() !== 'false';
 
 // Optional: Twitch OAuth refresh (prevents mid-stream auth issues)
 const TWITCH_CLIENT_ID     = process.env.TWITCH_CLIENT_ID || '';
@@ -227,6 +228,7 @@ client.connect().catch(err => {
 
 // --------- Token Auto-Refresh (background) ----------
 function upsertEnv(vars) {
+  if (!WRITE_ENV_FILE) return; // Respect no-write mode
   try {
     const envPath = path.resolve(process.cwd(), '.env');
     let content = '';

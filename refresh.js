@@ -15,7 +15,10 @@ if (!TWITCH_CLIENT_ID || !TWITCH_CLIENT_SECRET || !TWITCH_REFRESH_TOKEN) {
   process.exit(1);
 }
 
+const WRITE_ENV_FILE = (process.env.WRITE_ENV_FILE || 'true').toLowerCase() !== 'false';
+
 function upsertEnv(vars) {
+  if (!WRITE_ENV_FILE) return; // Respect no-write mode
   const envPath = path.resolve(process.cwd(), '.env');
   let content = '';
   try { content = fs.readFileSync(envPath, 'utf8'); } catch { /* new file */ }
@@ -56,7 +59,15 @@ async function refresh() {
     TWITCH_REFRESH_TOKEN: refreshToken,
   });
 
-  console.log('Refreshed token OK.');
+  // Always set in-memory for this process
+  process.env.TWITCH_OAUTH = `oauth:${access}`;
+  process.env.TWITCH_REFRESH_TOKEN = refreshToken;
+
+  if (WRITE_ENV_FILE) {
+    console.log('Refreshed token OK (saved to .env).');
+  } else {
+    console.log('Refreshed token OK (skipped .env write; set env vars in your OS).');
+  }
 }
 
 refresh().catch(err => {
