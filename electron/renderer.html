@@ -1,0 +1,205 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Twitch TTS Reader</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0d10; color: #e6e6e6; }
+      body.light { background: #fafafa; color: #222; }
+      a { color: #4ea1ff; }
+      .grid { display: grid; grid-template-columns: 220px 1fr; gap: 10px 16px; align-items: center; max-width: 820px; }
+      .row { display: contents; }
+      .row label { justify-self: end; opacity: 0.9; }
+      input, select { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2f36; background: #151a1f; color: #e6e6e6; transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease; }
+      body.light input, body.light select { background: #fff; color: #111; border-color: #ddd; }
+      .btns { margin: 16px 0; }
+      .btns button { margin-right:8px; padding: 8px 12px; border-radius: 6px; border: 1px solid #2a2f36; background: #1d232a; color: #e6e6e6; cursor: pointer; transition: background 0.1s ease, border-color 0.1s ease, transform 0.02s ease; }
+      .btns button:hover { background: #242b33; border-color: #37404a; }
+      .btns button:active { background: #2b333c; transform: translateY(1px); }
+      body.light .btns button { background: #fff; color: #111; border-color: #ddd; }
+      body.light .btns button:hover { background: #f3f3f3; border-color: #ccc; }
+      body.light .btns button:active { background: #eaeaea; }
+      /* Authorized button coloring */
+      #auth.auth-ok { background: #1a4a1d; border-color: #256a2a; color: #dfffe2; }
+      #auth.auth-ok:hover { background: #205b24; border-color: #2d7f32; }
+      #auth.auth-ok:active { background: #246b29; }
+      body.light #auth.auth-ok { background: #dcffd9; border-color: #b8f2b3; color: #0f5a15; }
+      body.light #auth.auth-ok:hover { background: #ceffc8; }
+      body.light #auth.auth-ok:active { background: #c4ffbf; }
+      /* Run toggle coloring */
+      #runToggle.state-stopped { background: #4a1616; border-color: #6b1f1f; color: #ffdede; }
+      #runToggle.state-stopped:hover { background: #5a1c1c; border-color: #7a2626; }
+      #runToggle.state-stopped:active { background: #6a2121; }
+      #runToggle.state-running { background: #1a4a1d; border-color: #256a2a; color: #dfffe2; }
+      #runToggle.state-running:hover { background: #205b24; border-color: #2d7f32; }
+      #runToggle.state-running:active { background: #246b29; }
+      body.light #runToggle.state-stopped { background: #ffdede; border-color: #f1b3b3; color: #7a1212; }
+      body.light #runToggle.state-stopped:hover { background: #ffcccc; }
+      body.light #runToggle.state-stopped:active { background: #ffc0c0; }
+      body.light #runToggle.state-running { background: #dcffd9; border-color: #b8f2b3; color: #0f5a15; }
+      body.light #runToggle.state-running:hover { background: #ceffc8; }
+      body.light #runToggle.state-running:active { background: #c4ffbf; }
+      #log { width: 95%; height: 220px; white-space: pre-wrap; background:#0e1116; color:#b8f4b8; padding:8px; overflow:auto; border: 1px solid #2a2f36; border-radius: 6px; }
+      body.light #log { background: #ffffff; color: #194d19; border-color: #ddd; }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <h2>Twitch TTS Reader</h2>
+
+    <div id="form" class="grid">
+      <div class="row"><label for="TWITCH_USERNAME">Twitch Username</label><input id="TWITCH_USERNAME" /></div>
+      <div class="row"><label for="TWITCH_CHANNEL">Channel</label><input id="TWITCH_CHANNEL" /></div>
+      <div class="row"><label for="TWITCH_CLIENT_ID">Client ID</label><input id="TWITCH_CLIENT_ID" /></div>
+      <div class="row"><label for="TWITCH_CLIENT_SECRET">Client Secret</label><input id="TWITCH_CLIENT_SECRET" type="password" /></div>
+      <div class="row"><label for="TWITCH_REDIRECT_URL">Redirect URL</label><input id="TWITCH_REDIRECT_URL" value="http://localhost:5173/callback" /></div>
+      <div class="row"><label for="TWITCH_HELIX_CLIENT_ID">Helix Client ID (optional)</label><input id="TWITCH_HELIX_CLIENT_ID" placeholder="defaults to TWITCH_CLIENT_ID" /></div>
+      <div class="row"><label for="TTS_ENDPOINT">TTS Endpoint</label><input id="TTS_ENDPOINT" value="https://tiktok-tts.weilnet.workers.dev" /></div>
+      <div class="row"><label for="TTS_VOICE_SELECT">Voice</label>
+        <select id="TTS_VOICE_SELECT"></select>
+        <input id="TTS_VOICE" value="en_male_narration" style="display:none" />
+      </div>
+      <div class="row btns">
+        <button id="save">Save</button>
+        <button id="auth">Authorize</button>
+        <button id="runToggle" class="state-stopped">Start Bot</button>
+        <button id="refreshStatus">Refresh Status</button>
+      </div>
+    </div>
+
+    <h3 style="display:inline-block;margin-right:10px;">Logs</h3>
+    <button id="toggleLogs" class="toggle">Show Logs</button>
+    <div id="log" class="hidden"></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const fields = [
+        'TWITCH_USERNAME','TWITCH_CHANNEL','TWITCH_CLIENT_ID','TWITCH_CLIENT_SECRET','TWITCH_REDIRECT_URL',
+        'TWITCH_HELIX_CLIENT_ID',
+        'TTS_ENDPOINT','TTS_VOICE',
+        'TWITCH_OAUTH','TWITCH_REFRESH_TOKEN'
+      ];
+
+      function readForm() {
+        const cfg = {};
+        for (const k of fields) { const el = $(k); if (el) cfg[k] = el.value; }
+        return cfg;
+      }
+      function writeForm(cfg) {
+        for (const k of fields) { const el = $(k); if (el && cfg[k] != null) el.value = cfg[k]; }
+      }
+      function log(msg) {
+        const el = $('log'); el.textContent += msg; if (!msg.endsWith('\n')) el.textContent += '\n'; el.scrollTop = el.scrollHeight;
+      }
+
+      async function populateVoices(selectedId) {
+        try {
+          const voices = await window.api.getVoices();
+          const sel = $('TTS_VOICE_SELECT');
+          sel.innerHTML = '';
+          if (Array.isArray(voices) && voices.length) {
+            for (const v of voices) {
+              const opt = document.createElement('option');
+              opt.value = v.voice_id;
+              opt.textContent = v.name || v.voice_id;
+              sel.appendChild(opt);
+            }
+            // If current selection isn't in list, add a custom entry
+            if (selectedId && !voices.some(v => v.voice_id === selectedId)) {
+              const opt = document.createElement('option');
+              opt.value = selectedId;
+              opt.textContent = `Custom: ${selectedId}`;
+              sel.appendChild(opt);
+            }
+            sel.value = selectedId || 'en_male_narration';
+            $('TTS_VOICE').value = sel.value;
+            sel.onchange = async () => {
+              $('TTS_VOICE').value = sel.value;
+              // Persist immediately so the bot can react in real time
+              await window.api.setConfig(readForm());
+            };
+          } else {
+            // Fallback: show raw input if no list
+            sel.style.display = 'none';
+            $('TTS_VOICE').style.display = '';
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      async function renderStatus() {
+        try {
+          const st = await window.api.getAuthStatus();
+          const ok = st && st.valid;
+          const missing = (st && st.missing && st.missing.length) ? `Missing: ${st.missing.join(', ')}` : '';
+          const ab = $('auth');
+          if (ok && st.info && st.info.login) {
+            ab.classList.add('auth-ok');
+            ab.textContent = `Authorized as @${st.info.login}`;
+          } else {
+            ab.classList.remove('auth-ok');
+            ab.textContent = 'Authorize';
+          }
+          ab.title = missing;
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      window.api.getConfig().then(async (cfg) => {
+        writeForm(cfg || {});
+        await populateVoices($('TTS_VOICE').value || 'en_male_narration');
+        // Apply theme
+        document.body.classList.toggle('light', (cfg && cfg.theme === 'light'));
+        await renderStatus();
+      });
+      window.api.onLog((m) => log(m));
+      window.api.onExit((code) => log(`Bot exited with code ${code}`));
+      window.api.onOAuthSuccess(() => { log('OAuth success. Tokens stored.'); window.api.getConfig().then(writeForm); });
+      window.api.onOAuthError((e) => log('OAuth error: ' + JSON.stringify(e)));
+
+      $('save').onclick = async () => { await window.api.setConfig(readForm()); log('Saved.'); };
+      $('auth').onclick = async () => { await window.api.setConfig(readForm()); await window.api.startOAuth(readForm()); };
+      $('runToggle').onclick = async () => {
+        const running = await window.api.getBotStatus();
+        if (running) {
+          await window.api.stopBot();
+        } else {
+          await window.api.setConfig(readForm());
+          await window.api.startBot(readForm());
+        }
+      };
+      $('refreshStatus').onclick = renderStatus;
+      $('toggleLogs').onclick = () => {
+        const log = $('log');
+        const btn = $('toggleLogs');
+        const hidden = log.classList.toggle('hidden');
+        btn.textContent = hidden ? 'Show Logs' : 'Hide Logs';
+      };
+
+      function applyRunState(running) {
+        const rt = $('runToggle');
+        if (running) {
+          rt.classList.remove('state-stopped');
+          rt.classList.add('state-running');
+          rt.textContent = 'Stop Bot';
+        } else {
+          rt.classList.remove('state-running');
+          rt.classList.add('state-stopped');
+          rt.textContent = 'Start Bot';
+        }
+      }
+
+      window.api.onOAuthSuccess(async () => { await renderStatus(); });
+      window.api.onOAuthError(async () => { await renderStatus(); });
+      window.api.onThemeChange((theme) => { document.body.classList.toggle('light', theme === 'light'); });
+      window.api.onStarted(() => applyRunState(true));
+      window.api.onExit(() => applyRunState(false));
+
+      // Initialize run state
+      window.api.getBotStatus().then(running => applyRunState(!!running));
+    </script>
+  </body>
+  </html>

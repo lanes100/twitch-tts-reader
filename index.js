@@ -46,6 +46,100 @@ const enc = new TextEncoder();
 const queue = [];
 let playing = false;
 
+// --------- Live Config Watch (from Electron) ----------
+const APP_CONFIG_PATH = process.env.APP_CONFIG_PATH || '';
+if (APP_CONFIG_PATH) {
+  try {
+    let timer = null;
+    const applyCfg = () => {
+      try {
+        const raw = fs.readFileSync(APP_CONFIG_PATH, 'utf8');
+        const cfg = JSON.parse(raw);
+        if (cfg && typeof cfg.TTS_VOICE === 'string' && cfg.TTS_VOICE.trim()) {
+          TTS_VOICE = cfg.TTS_VOICE.trim();
+          // Optional: log change
+          console.log(`Voice updated to ${TTS_VOICE}`);
+        }
+      } catch {}
+    };
+    applyCfg();
+    fs.watch(APP_CONFIG_PATH, { persistent: false }, () => {
+      clearTimeout(timer);
+      timer = setTimeout(applyCfg, 150);
+    });
+  } catch {}
+}
+
+// --------- Voice Resolver (Reward -> Voice) ----------
+let voicesIndexByName = new Map(); // lowercased friendly name -> voice_id
+const rewardTitleCache = new Map(); // reward_id -> reward title (friendly name)
+
+function loadVoicesJson() {
+  const candidates = [
+    path.resolve(process.cwd(), 'tiktokVoices.json'),
+    path.resolve(__dirname, 'tiktokVoices.json'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        const arr = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (Array.isArray(arr)) {
+          const map = new Map();
+          for (const v of arr) {
+            if (v && v.name && v.voice_id) map.set(String(v.name).toLowerCase(), String(v.voice_id));
+          }
+          voicesIndexByName = map;
+          return;
+        }
+      }
+    } catch {}
+  }
+}
+
+async function helixGetRewardTitle(broadcasterId, rewardId) {
+  if (rewardTitleCache.has(rewardId)) return rewardTitleCache.get(rewardId);
+  const clientId = process.env.TWITCH_CLIENT_ID || '';
+  const bearer = (process.env.TWITCH_OAUTH || '').replace(/^oauth:/, '');
+  if (!clientId || !bearer) {
+    console.warn('Missing TWITCH_CLIENT_ID or TWITCH_OAUTH for Helix lookup');
+    return null;
+  }
+  const url = new URL('https://api.twitch.tv/helix/channel_points/custom_rewards');
+  url.searchParams.set('broadcaster_id', String(broadcasterId));
+  url.searchParams.set('id', String(rewardId));
+  const res = await fetch(url, { headers: { 'Client-Id': clientId, 'Authorization': `Bearer ${bearer}` } });
+  let json = null;
+  try { json = await res.json(); } catch {}
+  if (!res.ok) {
+    const code = res.status;
+    if (code === 401 || code === 403) {
+      console.warn('Helix denied. Ensure scope channel:read:redemptions is granted and re-run auth.');
+    } else {
+      console.warn(`Helix error ${code}: ${JSON.stringify(json)}`);
+    }
+    return null;
+  }
+  const data = Array.isArray(json?.data) ? json.data : [];
+  const title = data[0]?.title || null;
+  if (title) rewardTitleCache.set(rewardId, title);
+  return title;
+}
+
+async function resolveVoiceFromRewardId(rewardId, broadcasterId) {
+  const title = await helixGetRewardTitle(broadcasterId, rewardId);
+  if (!title) return null;
+  const id = voicesIndexByName.get(String(title).toLowerCase());
+  if (!id) {
+    console.warn(`Reward title not found in tiktokVoices.json: ${title}`);
+    return null;
+  }
+  return id;
+}
+
+// initial load and watch for updates to voices list
+loadVoicesJson();
+try { fs.watch(path.resolve(process.cwd(), 'tiktokVoices.json'), { persistent: false }, () => loadVoicesJson()); } catch {}
+
 // Split to <= byteLimit bytes on word boundaries (emoji/CJK safe)
 function splitToUtf8WordChunks(text, byteLimit = 300) {
   const chunks = [];
@@ -81,18 +175,18 @@ function splitToUtf8WordChunks(text, byteLimit = 300) {
   return chunks;
 }
 
-function enqueue(text) {
+function enqueue(text, voiceOverride) {
   const parts = splitToUtf8WordChunks(text, BYTE_LIMIT);
-  for (const p of parts) queue.push(p);
+  for (const p of parts) queue.push({ text: p, voice: voiceOverride || null });
   if (!playing) drainQueue();
 }
 
 async function drainQueue() {
   playing = true;
   while (queue.length) {
-    const msg = queue.shift();
+    const item = queue.shift();
     try {
-      await ttsToSpeaker(msg);
+      await ttsToSpeaker(item.text, item.voice || undefined);
       await new Promise(r => setTimeout(r, 150)); // small gap
     } catch (e) {
       console.error(e?.message || e);
@@ -102,13 +196,13 @@ async function drainQueue() {
 }
 
 // --------- TTS & Playback ----------
-async function ttsToSpeaker(text) {
+async function ttsToSpeaker(text, voiceOverride) {
   if (!text) return;
 
   const res = await fetch(`${TTS_ENDPOINT}/api/generation`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice: TTS_VOICE }),
+    body: JSON.stringify({ text, voice: voiceOverride || TTS_VOICE }),
   });
 
   let json;
@@ -140,7 +234,7 @@ async function ttsToSpeaker(text) {
       '-ar', '48000',
       '-ac', '2',
       wavPath
-    ], { stdio: ['pipe', 'inherit', 'inherit'] });
+    ], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
 
     ff.on('error', reject);
     ff.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`)));
@@ -186,7 +280,7 @@ client.on('disconnected', async (reason) => {
   }
 });
 
-client.on('message', (channel, tags, message, self) => {
+client.on('message', async (channel, tags, message, self) => {
   const isBroadcaster = !!tags.badges?.broadcaster;
   const isMod = !!tags.mod || isBroadcaster;
 
@@ -218,7 +312,14 @@ client.on('message', (channel, tags, message, self) => {
 
   // Normalize whitespace
   const clean = trimmed.replace(/\s+/g, ' ');
-  enqueue(clean);
+  // Channel points redemption support: tmi tag 'custom-reward-id'
+  const rewardId = tags['custom-reward-id'];
+  let voiceOverride = null;
+  if (rewardId) {
+    const broadcasterId = tags['room-id'];
+    voiceOverride = await resolveVoiceFromRewardId(rewardId, broadcasterId);
+  }
+  enqueue(clean, voiceOverride);
 });
 
 client.connect().catch(err => {

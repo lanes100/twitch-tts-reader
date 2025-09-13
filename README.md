@@ -2,7 +2,7 @@
 
 Twitch chat -> TikTok TTS -> audio playback, Windows‑friendly and zero native build.
 
-Works with Node 18+. No node-gyp, no native speaker bindings. Uses `ffmpeg-static` to convert MP3 to WAV and `node-wav-player` for playback.
+Use it as a one‑click Electron app (recommended) or as a CLI. No node‑gyp, no native speaker bindings. Uses `ffmpeg-static` to convert MP3 to WAV and `node-wav-player` for playback.
 
 ## Features
 - UTF‑8 byte‑aware message chunking (≤300 bytes, emoji/CJK safe)
@@ -28,16 +28,26 @@ Works with Node 18+. No node-gyp, no native speaker bindings. Uses `ffmpeg-stati
 
 You can change the redirect port/URL later; if you do, keep the app settings and `.env` in sync.
 
-## 2) Configure Environment
+## 2) Configure (Electron or CLI)
 1. Install dependencies:
    - `npm install`
 2. Create your env file:
    - `cp .env.example .env`
-3. Edit `.env` and fill:
-   - `TWITCH_USERNAME` — your bot account username
-   - `TWITCH_CHANNEL` — the channel to join (without `#`)
-   - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`
-   - Optional defaults: `TTS_VOICE` (default: `en_male_narration`), `BYTE_LIMIT`, etc.
+Electron app (recommended)
+- Dev run: `npm run dev:electron`
+- Fill in: Twitch Username, Channel, Client ID/Secret, Redirect URL (defaults to `http://localhost:5173/callback`), optional Helix Client ID override, TTS Endpoint, and Voice.
+- Click “Authorize” and log in as the broadcaster. The button turns green and displays “Authorized as @username” when OK. Scopes are enforced: `chat:read chat:edit channel:read:redemptions`.
+- Click “Start Bot” (turns green for running; red when stopped). Logs are hidden by default — use “Show Logs”. Dark mode is default; toggle in View → Dark Mode.
+
+CLI (optional, advanced)
+1. Copy env: `cp .env.example .env`
+2. Edit `.env` with your values. Ensure `TWITCH_SCOPES` includes: `chat:read chat:edit channel:read:redemptions`.
+3. Authorize: `npm run auth` (opens browser)
+4. Start: `npm start`
+
+Single authorization
+- The same authorization is used for chat and for Helix (channel points).
+- Ensure `TWITCH_SCOPES` includes: `chat:read chat:edit channel:read:redemptions`.
 
 Notes about secrets
 - `.env` is gitignored. `.env.example` is tracked with placeholders.
@@ -90,6 +100,7 @@ Environment for validator (optional)
 - EADDRINUSE on port 5173 during auth: the script tries to terminate listeners automatically; otherwise change `TWITCH_REDIRECT_URL` and Twitch app settings to match.
 - Browser didn’t open: copy the URL printed in the console and open it manually.
 - TTS errors: run the voice validator to confirm a voice ID is accepted by the endpoint.
+- Helix 401/403 for redemptions: ensure the token used for Helix has `channel:read:redemptions`. Re-run auth to grant new scopes, or set `TWITCH_BROADCASTER_OAUTH` with a broadcaster token.
 - Audio output: ensure system audio isn’t blocked/muted. Playback uses `node-wav-player` with `ffmpeg-static` conversion.
 
 ## Project Notes
@@ -97,3 +108,68 @@ Environment for validator (optional)
 - UTF‑8 byte limit and chunking keep emoji/CJK intact.
 - Endpoint default: `https://tiktok-tts.weilnet.workers.dev`.
 
+Electron vs CLI
+- The Electron app stores configuration in its own app data and doesn’t require `.env`.
+- The CLI (`npm start`) uses `.env`. Keep `.env.example` as a template.
+
+## Release Builds (Windows)
+
+Local build
+- `npm install`
+- `npm run build:electron` (uses electron‑builder)
+- Output: `dist/` contains the NSIS installer (`.exe`) and unpacked app.
+
+CI/CD plan (GitHub Actions)
+- Trigger: on Git tag (e.g., `v*`) or manual dispatch.
+- Runner: `windows-latest` to build the Windows installer.
+- Steps:
+  - Checkout repo
+  - Setup Node (e.g., 20.x) with caching
+  - `npm ci`
+  - `npm run build:electron`
+  - Upload artifacts (dist/*.exe, dist/*.yml) to the workflow run
+  - Optional: Create GitHub Release and attach artifacts
+
+Example workflow outline (add to `.github/workflows/release.yml`)
+
+```
+name: Build Electron (Windows)
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build:electron
+      - uses: actions/upload-artifact@v4
+        with:
+          name: twitch-tts-reader-win
+          path: |
+            dist/*.exe
+            dist/*.yml
+      # Optional: publish a release when building from tags
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Notes
+- Code signing: if you have a code signing cert, configure it per electron‑builder docs (env vars on the runner) to avoid SmartScreen warnings.
+- Cache: electron caches downloads between runs; Node modules are cached via setup-node.
+- Artifacts: you can also upload the unpacked `dist/win-unpacked` for portable usage.

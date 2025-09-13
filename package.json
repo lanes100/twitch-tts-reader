@@ -9,7 +9,33 @@
     "auth": "node auth.js",
     "refresh": "node refresh.js",
     "voice:validate": "node tools/validate-voice.js",
-    "voice:validate:all": "node tools/validate-voice.js --all"
+    "voice:validate:all": "node tools/validate-voice.js --all",
+    "dev:electron": "electron electron/main.js",
+    "build:electron": "electron-builder -w"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.example.twitchttsreader",
+    "productName": "Twitch TTS Reader",
+    "files": [
+      "index.js",
+      "auth.js",
+      "refresh.js",
+      "codex_context.md",
+      "tiktokVoices.json",
+      "electron/**/*",
+      "README.md",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build"
+    },
+    "win": {
+      "target": ["nsis"]
+    }
   },
     "dependencies": {
     "dotenv": "^16.4.5",
