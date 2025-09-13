@@ -2,8 +2,6 @@
 
 Twitch chat -> TikTok TTS -> audio playback. Windows‑friendly, no native builds.
 
-—
-
 End‑User Quick Start (Recommended)
 - Create a Twitch Application
   1. Go to https://dev.twitch.tv/console/apps and click “Register Your Application”.
@@ -50,8 +48,6 @@ Troubleshooting
 - No sound: verify Windows audio isn’t muted; try a different voice; check Logs.
 - App won’t launch or is blank: see startup log at `%APPDATA%/Twitch TTS Reader/startup.log` and reinstall the latest release.
 - Installer runs but app won’t start: download a fresh installer from Releases.
-
-—
 
 ## Features
 - UTF‑8 byte‑aware message chunking (≤300 bytes, emoji/CJK safe)
