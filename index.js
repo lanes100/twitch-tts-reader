@@ -32,6 +32,21 @@ const SELF_READ       = (process.env.SELF_READ || 'false').toLowerCase() === 'tr
 const WRITE_ENV_FILE  = (process.env.WRITE_ENV_FILE || 'true').toLowerCase() !== 'false';
 let READ_ALL          = (process.env.READ_ALL || 'true').toLowerCase() === 'true';
 let VOICE_PRIVILEGED_ONLY = (process.env.VOICE_PRIVILEGED_ONLY || 'true').toLowerCase() === 'true';
+// Always ignore known chat bots (non-configurable)
+const KNOWN_BOTS = [
+  'streamelements','streamlabs','nightbot','moobot','wizebot','fossabot','cloudbot',
+  'commanderroot','soundalerts','stay_hydrated_bot','anotherttvviewer','chatstatsbot',
+];
+const KNOWN_BOTS_SET = new Set(KNOWN_BOTS);
+function isLikelyBot(tags) {
+  const name = String(tags.username || '').toLowerCase();
+  if (!name) return false;
+  if (KNOWN_BOTS_SET.has(name)) return true;
+  if (name.endsWith('bot') || name.startsWith('bot') || name.includes('bot_')) return true;
+  const disp = String(tags['display-name'] || '').toLowerCase();
+  if (disp && disp.includes('bot')) return true;
+  return false;
+}
 
 // Optional: Twitch OAuth refresh (prevents mid-stream auth issues)
 const TWITCH_CLIENT_ID     = process.env.TWITCH_CLIENT_ID || '';
@@ -375,9 +390,9 @@ client.on('disconnected', async (reason) => {
 client.on('message', async (channel, tags, message, self) => {
   const isBroadcaster = !!tags.badges?.broadcaster;
   const isMod = !!tags.mod || isBroadcaster;
+  const isSub = tags.subscriber === true || tags.subscriber === '1' || tags.badges?.subscriber;
   const isVip = !!(tags.badges && tags.badges.vip);
   const canChangeVoice = (isMod || isSub || isVip) || !VOICE_PRIVILEGED_ONLY;
-  const isSub = tags.subscriber === true || tags.subscriber === '1' || tags.badges?.subscriber;
 
   // Owner/mod runtime commands
   const cmdMatch = message.match(/^!(limit|voice)\s+(.+)$/i);
@@ -438,6 +453,7 @@ client.on('message', async (channel, tags, message, self) => {
   }
 
   if (self && !SELF_READ) return;
+  if (isLikelyBot(tags)) return; // ignore bots
 
   const trimmed = message.trim();
   if (!trimmed) return;
