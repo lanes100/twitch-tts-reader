@@ -51,49 +51,7 @@ jobs:
           git tag -a "$next" -m "chore(release): $next [skip ci]"
           git push origin "$next"
 
-  build-win:
-    # Only build on tag events; skip on branch pushes
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: windows-latest
-    permissions:
-      contents: write  # required for creating GitHub Releases
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build Electron app (Windows)
-        run: npm run build:electron -- -p never
-
-      - name: Remove auto-update metadata (not used)
-        run: |
-          Remove-Item -ErrorAction SilentlyContinue dist\*.yml
-          Remove-Item -ErrorAction SilentlyContinue dist\*.blockmap
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: twitch-tts-reader-win
-          path: dist/*.exe
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Twitch TTS Reader ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: dist/*.exe
+  # build-from-tag job removed as part of cleanup; single path builds from main using autotag
 
   build-from-main:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
