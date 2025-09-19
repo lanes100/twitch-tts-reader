@@ -15,7 +15,7 @@ const fetch = require('node-fetch');        // v2 (CommonJS)
 const { TextEncoder } = require('util');
 const express = require('express');
 
-// ---------- ENV & Defaults -----------
+// --------- ENV & Defaults ----------
 function clampInt(str, min, max, fallback) {
   const n = Number.parseInt(String(str), 10);
   if (Number.isNaN(n)) return fallback;
