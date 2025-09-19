@@ -10,7 +10,8 @@ on:
 
 jobs:
   autotag:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Opt-in: only tag when commit message contains [release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
     runs-on: ubuntu-latest
     permissions:
       contents: write
