@@ -2,24 +2,27 @@
 
 Twitch chat -> TikTok TTS -> audio playback. Windows‑friendly, no native builds.
 
-—
-
-End‑User Quick Start (Recommended)
-- Download the latest Windows installer from GitHub Releases (Twitch TTS Reader Setup x.y.z.exe).
-- Run the installer:
-  - Choose install directory
-  - Keep “Create Desktop Shortcut” checked (default) if you want a desktop icon
+## End‑User Quick Start (Recommended)
+- Create a Twitch Application
+    1. Go to https://dev.twitch.tv/console/apps and click “Register Your Application”.
+    2. Name: anything (e.g., "TTS Reader").
+    3. OAuth Redirect URL: `http://localhost:5173/callback`
+    4. Category: Website Integration.
+    5. After creating, open the app to copy the `Client ID` and generate a `Client Secret`.
+    6. Scopes required: `chat:read chat:edit`.
+- Download the latest Windows installer from [GitHub Releases](https://github.com/lanes100/twitch-tts-reader/releases) (Twitch TTS Reader Setup x.y.z.exe).
+- Run the installer
 - Open “Twitch TTS Reader”. In the window:
-  - Fill Twitch Username and Channel (no #)
-  - Paste your Twitch Client ID and Secret (from Twitch Dev Console)
-  - Keep Redirect URL as `http://localhost:5173/callback` unless you changed it in the app settings on Twitch
-  - Choose a Voice from the dropdown (friendly names from tiktokVoices.json)
-  - Optional: toggle “Read All Messages” if you want every message read aloud (you can change this live while streaming). Channel point redemptions are always read.
-  - Click “Authorize”. The button turns green and reads “Authorized as @username” when successful.
-  - Click “Start Bot” (button turns green while running). Logs are hidden by default—click “Show Logs” to view.
-  - Dark mode is default. Toggle View → Dark Mode to switch.
+- Fill Twitch Username and Channel (no #)
+- Paste your Twitch Client ID and Secret (from Twitch Dev Console)
+- Keep Redirect URL as `http://localhost:5173/callback` unless you changed it in the app settings on Twitch
+- Choose a Voice from the dropdown (friendly names from tiktokVoices.json)
+- Optional: toggle “Read All Messages” if you want every message read aloud (you can change this live while streaming). Channel point redemptions are always read.
+- Click “Authorize”. The button turns green and reads “Authorized as @username” when successful.
+- Click “Start Bot” (button turns green while running). Logs are hidden by default—click “Show Logs” to view.
+- Dark mode is default. Toggle View → Dark Mode to switch.
 
-In‑Chat Commands
+### In‑Chat Commands
 - Broadcaster/mods:
   - `!limit <1..300>`: set byte chunk limit for messages
   - `!voice <voice_id>`: set the default TTS voice (e.g., `!voice en_male_narration`)
@@ -29,24 +32,22 @@ In‑Chat Commands
   - `!default_voice`: reset your personal voice to the default
   - Voice IDs must exist in the built‑in `tiktokVoices.json` list
 
-Channel Point Redemptions
+### Channel Point Redemptions
 - When a user redeems a channel points reward, the bot fetches the reward title via Twitch Helix.
 - If the reward title matches a friendly voice name in `tiktokVoices.json`, that voice is used for the entire message (all chunks), regardless of the Read All toggle.
 - Required scope: `channel:read:redemptions` (granted automatically when you authorize in the app).
 
-Behavior Notes
+### Behavior Notes
 - Messages never overlap: the bot queues messages and plays them in order.
 - Minimal delay: while one message plays, the next is generated in parallel.
 - The Read All toggle applies live. Redemptions always read. Admin/voice commands are handled but not spoken unless you enable command reading.
 - Logs: click “Show Logs” to reveal; click again to hide.
 
-Troubleshooting
+### Troubleshooting
 - “Authorize” stays gray or missing scopes: click Authorize again and consent; force verify is enabled. Ensure you log in as the channel broadcaster.
 - No sound: verify Windows audio isn’t muted; try a different voice; check Logs.
 - App won’t launch or is blank: see startup log at `%APPDATA%/Twitch TTS Reader/startup.log` and reinstall the latest release.
 - Installer runs but app won’t start: download a fresh installer from Releases.
-
-—
 
 ## Features
 - UTF‑8 byte‑aware message chunking (≤300 bytes, emoji/CJK safe)
