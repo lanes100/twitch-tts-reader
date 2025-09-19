@@ -15,4 +15,5 @@ contextBridge.exposeInMainWorld('api', {
   onOAuthSuccess: (cb) => ipcRenderer.on('oauth:success', (_e, data) => cb(data)),
   onOAuthError: (cb) => ipcRenderer.on('oauth:error', (_e, data) => cb(data)),
   onThemeChange: (cb) => ipcRenderer.on('theme:changed', (_e, theme) => cb(theme)),
+  onBotRunning: (cb) => ipcRenderer.on('bot:running', (_e, running) => cb(!!running)),
 });

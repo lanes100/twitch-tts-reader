@@ -69,6 +69,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup .NET SDK (for AudioHelper)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build Audio Helper (NAudio)
+        run: |
+          dotnet restore audio-helper/AudioHelper.csproj
+          dotnet publish audio-helper/AudioHelper.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:SelfContained=true -o audio-helper
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:

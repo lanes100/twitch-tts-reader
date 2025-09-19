@@ -44,6 +44,9 @@
       ],
       "signAndEditExecutable": false
     },
+    "extraResources": [
+      "audio-helper/AudioHelper.exe"
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

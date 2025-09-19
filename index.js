@@ -13,8 +13,9 @@ require('dotenv').config();
 const tmi = require('tmi.js');
 const fetch = require('node-fetch');        // v2 (CommonJS)
 const { TextEncoder } = require('util');
+const express = require('express');
 
-// --------- ENV & Defaults ----------
+// ---------- ENV & Defaults -----------
 function clampInt(str, min, max, fallback) {
   const n = Number.parseInt(String(str), 10);
   if (Number.isNaN(n)) return fallback;
@@ -58,8 +59,7 @@ const BYTE_LIMIT_BASE = clampInt(process.env.BYTE_LIMIT, 1, 300, 300);
 let BYTE_LIMIT = BYTE_LIMIT_BASE;
 
 if (!TWITCH_USERNAME || !TWITCH_CHANNEL || !TWITCH_OAUTH) {
-  console.error('Missing env vars: set TWITCH_USERNAME, TWITCH_CHANNEL, TWITCH_OAUTH');
-  process.exit(1);
+  console.warn('Twitch credentials not fully set. The OBS dock will run; start the bot from the dock when ready.');
 }
 
 const enc = new TextEncoder();
@@ -67,6 +67,8 @@ const enc = new TextEncoder();
 // --------- Queue & Chunking ----------
 const queue = [];
 let playing = false;
+let paused = false;
+let VOLUME = Math.max(0, Math.min(2, parseFloat(process.env.VOLUME || '1') || 1));
 
 // --------- Live Config Watch (from Electron) ----------
 const APP_CONFIG_PATH = process.env.APP_CONFIG_PATH || '';
@@ -250,6 +252,7 @@ async function drainQueue() {
       const nextPromise = next ? synthToWav(next.text, next.voice || undefined) : null;
       const wavPath = await currentPromise;
       await playWav(wavPath);
+      if (paused) break;
       if (!nextPromise) break;
       currentPromise = nextPromise;
     }
@@ -286,6 +289,7 @@ async function synthToWav(text, voiceOverride) {
       '-y',
       '-f', 'mp3',
       '-i', 'pipe:0',
+      ...(VOLUME && VOLUME !== 1 ? ['-filter:a', `volume=${VOLUME}`] : []),
       '-f', 'wav',
       '-ar', '48000',
       '-ac', '2',
@@ -311,83 +315,171 @@ async function playWav(wavPath) {
 }
 
 // Persistent PowerShell player to minimize per-message overhead on Windows
-let psPlayer = null;
-let psPending = [];
-let psBuf = '';
-function ensurePsPlayer() {
-  if (psPlayer && !psPlayer.killed) return;
-  const psScript = "$reader = [Console]::In; while (($line = $reader.ReadLine()) -ne $null) { if (-not [string]::IsNullOrWhiteSpace($line)) { try { $p = New-Object System.Media.SoundPlayer $line; $p.PlaySync(); Write-Output 'DONE' } catch { Write-Output ('ERR:' + $_.Exception.Message) } } }";
-  psPlayer = spawn('powershell.exe', ['-NoLogo','-NoProfile','-Command', psScript], { stdio: ['pipe','pipe','pipe'], windowsHide: true });
-  psPlayer.on('error', (e) => {
-    const q = psPending;
-    psPending = [];
-    q.forEach(p => p.reject(e));
-  });
-  psPlayer.stdout.on('data', (d) => {
-    psBuf += d.toString();
-    let idx;
-    while ((idx = psBuf.indexOf('\n')) !== -1) {
-      const line = psBuf.slice(0, idx).trim();
-      psBuf = psBuf.slice(idx + 1);
-      if (!psPending.length) continue;
-      const { resolve, reject } = psPending.shift();
-      if (line === 'DONE') resolve();
-      else if (line.startsWith('ERR:')) reject(new Error(line.slice(4)));
-      else resolve();
-    }
-  });
-  psPlayer.stderr.on('data', () => { /* ignore */ });
-  psPlayer.on('close', () => {
-    const q = psPending; psPending = [];
-    q.forEach(p => p.reject(new Error('PowerShell player closed')));
-  });
-}
-
-function playWavWindowsBlocking(wavPath) {
-  ensurePsPlayer();
-  return new Promise((resolve, reject) => {
-    psPending.push({ resolve, reject });
-    try {
-      psPlayer.stdin.write(wavPath + '\n');
-    } catch (e) {
-      psPending.pop();
-      reject(e);
-    }
-  });
-}
-
-// --------- Twitch Client ----------
-const client = new tmi.Client({
-  options: { debug: false },
-  connection: { reconnect: true, secure: true },
-  identity: { username: TWITCH_USERNAME, password: TWITCH_OAUTH },
-  channels: [`#${TWITCH_CHANNEL}`],
-});
-
-client.on('connected', (addr, port) => {
-  console.log(`Connected to Twitch at ${addr}:${port}, listening in #${TWITCH_CHANNEL}`);
-  console.log(`TTS voice: ${TTS_VOICE} | Byte limit: ${BYTE_LIMIT}`);
-});
-
-let triedRefreshReconnect = false;
-client.on('disconnected', async (reason) => {
-  console.warn('Disconnected:', reason);
-  if (!triedRefreshReconnect && TWITCH_CLIENT_ID && TWITCH_CLIENT_SECRET && TWITCH_REFRESH_TOKEN) {
-    triedRefreshReconnect = true;
-    try {
-      await refreshAccessToken();
-      // Update client identity for next connect
-      client.opts.identity.password = process.env.TWITCH_OAUTH;
-      console.log('Reconnecting after token refresh...');
-      await client.connect();
-      triedRefreshReconnect = false; // reset on success
-    } catch (e) {
-      console.warn('Auto-refresh reconnect failed:', e?.message || e);
+// Windows Media Player controller (supports live pause/resume/volume/stop)
+const USE_WMP = false; // set true to try WMP controller; false uses SoundPlayer one-shot (reliable audio)
+// Native helper (NAudio) preferred; fallback to WMP/SoundPlayer
+let helperProc = null;
+let helperBuf = '';
+let helperAckResolve = null;
+let helperDoneResolve = null;
+let wmpProc = null;
+let wmpBuf = '';
+let wmpPending = [];
+// Removed basic SoundPlayer fallback; helper is required on Windows
+function ensureWmpController() {
+  if (wmpProc && !wmpProc.killed) return;
+  const psScript = `
+$wmp = New-Object -ComObject WMPlayer.OCX
+$wmp.settings.volume = 100
+$playing = $false
+function WriteOut($s){ [Console]::Out.WriteLine($s) | Out-Null }
+function PlayPath($p){ $global:playing = $true; $wmp.URL = $p; $wmp.controls.play() }
+$reader = [Console]::In
+while ($true) {
+  while ($reader.Peek() -ne -1) {
+    $line = $reader.ReadLine()
+    if ($line) {
+      if ($line -like 'PLAY *') { $path = $line.Substring(5).Trim(); PlayPath $path; WriteOut 'ACK' }
+      elseif ($line -like 'PAUSE*') { $wmp.controls.pause(); WriteOut 'ACK' }
+      elseif ($line -like 'RESUME*') { $wmp.controls.play(); WriteOut 'ACK' }
+      elseif ($line -like 'STOP*') { $wmp.controls.stop(); WriteOut 'STOPPED' }
+      elseif ($line -like 'VOLUME *') { $v = [int]($line.Substring(7).Trim()); if ($v -lt 0){$v=0}; if ($v -gt 100){$v=100}; $wmp.settings.volume = $v; WriteOut 'ACK' }
+      else { WriteOut 'ACK' }
     }
   }
-});
+  $state = $wmp.playState
+  if ($global:playing -and ($state -eq 1 -or $state -eq 8)) { WriteOut 'DONE'; $global:playing = $false }
+  Start-Sleep -Milliseconds 50
+}
+`;
+  wmpProc = spawn('powershell.exe', ['-NoLogo','-NoProfile','-STA','-Command', psScript], { stdio: ['pipe','pipe','pipe'], windowsHide: true });
+  wmpProc.on('error', (e) => {
+    const q = wmpPending; wmpPending = []; q.forEach(p => p.reject(e));
+  });
+  wmpProc.stdout.on('data', d => {
+    wmpBuf += d.toString();
+    let idx;
+    while ((idx = wmpBuf.indexOf('\n')) !== -1) {
+      const line = wmpBuf.slice(0, idx).trim();
+      wmpBuf = wmpBuf.slice(idx + 1);
+      if (line === 'DONE' || line === 'STOPPED' || line === 'ACK') {
+        const t = wmpPending.shift(); if (t) t.resolve(line);
+      }
+    }
+  });
+  wmpProc.stderr.on('data', () => {});
+  wmpProc.on('close', () => {
+    const q = wmpPending; wmpPending = []; q.forEach(p => p.reject(new Error('WMP controller closed')));
+  });
+}
+function wmpSend(cmd) {
+  ensureWmpController();
+  return new Promise((resolve, reject) => {
+    wmpPending.push({ resolve, reject });
+    try { wmpProc.stdin.write(cmd + '\n'); } catch (e) { wmpPending.pop(); reject(e); }
+  });
+}
+function helperPathCandidates() {
+  const cands = [];
+  if (process.env.APP_RESOURCES_DIR) {
+    cands.push(path.join(process.env.APP_RESOURCES_DIR, 'AudioHelper.exe'));
+    cands.push(path.join(process.env.APP_RESOURCES_DIR, 'audio-helper', 'AudioHelper.exe'));
+  }
+  // Common dev paths
+  cands.push(path.join(process.cwd(), 'audio-helper', 'AudioHelper.exe'));
+  cands.push(path.join(__dirname, 'audio-helper', 'AudioHelper.exe'));
+  cands.push(path.join(process.cwd(), 'AudioHelper.exe'));
+  cands.push(path.join(process.cwd(), 'audio-helper', 'bin', 'Release', 'net6.0-windows', 'win-x64', 'publish', 'AudioHelper.exe'));
+  if (process.env.AUDIO_HELPER_PATH) cands.unshift(process.env.AUDIO_HELPER_PATH);
+  return cands;
+}
+function ensureHelperController() {
+  if (helperProc && !helperProc.killed) return true;
+  const exe = helperPathCandidates().find(p => { try { return fs.existsSync(p); } catch { return false; } });
+  if (!exe) {
+    try {
+      console.error('[Audio] Helper not found. Searched:', helperPathCandidates().join(' | '));
+    } catch {}
+    return false;
+  }
+  helperProc = spawn(exe, [], { stdio: ['pipe','pipe','pipe'], windowsHide: true });
+  console.log(`[Audio] Using helper backend: ${exe}`);
+  helperProc.on('error', (e) => { const q = helperPending; helperPending = []; q.forEach(p => p.reject(e)); });
+  helperProc.stdout.on('data', d => {
+    helperBuf += d.toString();
+    let idx;
+    while ((idx = helperBuf.indexOf('\n')) !== -1) {
+      const line = helperBuf.slice(0, idx).trim();
+      helperBuf = helperBuf.slice(idx + 1);
+      try { console.log(`[Audio] helper: ${line}`); } catch {}
+      if (line === 'ACK') { const fn = helperAckResolve; helperAckResolve = null; if (fn) fn(line); }
+      else if (line === 'DONE' || line === 'STOPPED') { const fn = helperDoneResolve; helperDoneResolve = null; if (fn) fn(line); }
+    }
+  });
+  helperProc.stderr.on('data', () => {});
+  helperProc.on('close', () => { if (helperAckResolve) { try { helperAckResolve(Promise.reject(new Error('Helper closed')));} catch{} } helperAckResolve = null; if (helperDoneResolve) { try { helperDoneResolve(Promise.reject(new Error('Helper closed')));} catch{} } helperDoneResolve = null; });
+  return true;
+}
+function helperSend(cmd) {
+  if (!ensureHelperController()) return Promise.reject(new Error('Helper not available'));
+  return new Promise((resolve, reject) => {
+    helperAckResolve = resolve;
+    try { helperProc.stdin.write(cmd + '\n'); } catch (e) { helperAckResolve = null; reject(e); }
+  });
+}
+async function playWavWindowsBlocking(wavPath) {
+  if (process.platform !== 'win32') throw new Error('Windows helper required for this path');
+  if (!ensureHelperController()) throw new Error('Audio helper not found');
+  await helperSend(`PLAY ${wavPath}`);
+  const res = await new Promise((resolve, reject) => { helperDoneResolve = resolve; });
+  try { console.log('[Audio] clip done'); } catch {}
+  return res;
+}
+function interruptCurrentPlayback() {
+  if (process.platform !== 'win32') return false;
+  if (helperProc && !helperProc.killed) { try { helperSend('STOP'); return true; } catch { return false; } }
+  return false;
+}
 
-client.on('message', async (channel, tags, message, self) => {
+// --------- Twitch Client (lazy start/stop) ----------
+let client = null;
+let botRunning = false;
+let triedRefreshReconnect = false;
+
+function buildClient() {
+  return new tmi.Client({
+    options: { debug: false },
+    connection: { reconnect: true, secure: true },
+    identity: { username: TWITCH_USERNAME, password: TWITCH_OAUTH },
+    channels: [`#${TWITCH_CHANNEL}`],
+  });
+}
+
+function setupClientEvents(c) {
+  c.on('connected', (addr, port) => {
+    botRunning = true;
+    console.log(`Connected to Twitch at ${addr}:${port}, listening in #${TWITCH_CHANNEL}`);
+    console.log(`TTS voice: ${TTS_VOICE} | Byte limit: ${BYTE_LIMIT}`);
+  });
+
+  c.on('disconnected', async (reason) => {
+    console.warn('Disconnected:', reason);
+    botRunning = false;
+    if (!triedRefreshReconnect && TWITCH_CLIENT_ID && TWITCH_CLIENT_SECRET && TWITCH_REFRESH_TOKEN) {
+      triedRefreshReconnect = true;
+      try {
+        await refreshAccessToken();
+        if (client) client.opts.identity.password = process.env.TWITCH_OAUTH;
+        console.log('Reconnecting after token refresh...');
+        if (client) await client.connect();
+        triedRefreshReconnect = false; // reset on success
+      } catch (e) {
+        console.warn('Auto-refresh reconnect failed:', e?.message || e);
+      }
+    }
+  });
+
+  c.on('message', async (channel, tags, message, self) => {
   const isBroadcaster = !!tags.badges?.broadcaster;
   const isMod = !!tags.mod || isBroadcaster;
   const isSub = tags.subscriber === true || tags.subscriber === '1' || tags.badges?.subscriber;
@@ -473,12 +565,44 @@ client.on('message', async (channel, tags, message, self) => {
     if (uid && userVoices[uid]) voiceOverride = userVoices[uid];
   }
   enqueue(clean, voiceOverride);
-});
+  });
+}
 
-client.connect().catch(err => {
-  console.error('Twitch connect error:', err);
-  process.exit(1);
-});
+async function startBot() {
+  if (client) return { ok: true, already: true };
+  if (!TWITCH_USERNAME || !TWITCH_CHANNEL || !TWITCH_OAUTH) {
+    throw new Error('Missing Twitch credentials (TWITCH_USERNAME, TWITCH_CHANNEL, TWITCH_OAUTH)');
+  }
+  const c = buildClient();
+  setupClientEvents(c);
+  client = c;
+  try {
+    await client.connect();
+    botRunning = true;
+    return { ok: true };
+  } catch (e) {
+    client = null; botRunning = false;
+    throw e;
+  }
+}
+
+async function stopBot() {
+  if (!client) return { ok: true, already: true };
+  try { await client.disconnect(); } catch {}
+  client.removeAllListeners?.();
+  client = null;
+  botRunning = false;
+  return { ok: true };
+}
+
+// Auto-start the Twitch client when credentials are present unless explicitly disabled
+if (process.env.AUTOSTART_BOT !== 'false') {
+  if (TWITCH_USERNAME && TWITCH_CHANNEL && TWITCH_OAUTH) {
+    startBot().catch(e => {
+      try { console.warn('Autostart failed:', e?.message || e); } catch {}
+    });
+  }
+}
 
 // --------- Token Auto-Refresh (background) ----------
 function upsertEnv(vars) {
@@ -529,6 +653,194 @@ if (TWITCH_CLIENT_ID && TWITCH_CLIENT_SECRET && TWITCH_REFRESH_TOKEN) {
   setInterval(() => {
     refreshAccessToken().catch(e => console.warn('Background refresh failed:', e?.message || e));
     // Do not force reconnect; token is used on next connect
-    client.opts.identity.password = process.env.TWITCH_OAUTH;
+    if (client) client.opts.identity.password = process.env.TWITCH_OAUTH;
   }, THREE_HOURS).unref?.();
 }
+
+// --------- Local Control Server (OBS Dock) ----------
+try {
+  const CTRL_PORT = parseInt(process.env.OBS_CTRL_PORT || '5176', 10);
+  const app = express();
+  app.use(express.json());
+
+  // Status
+  app.get('/api/status', (req, res) => {
+    res.json({
+      playing,
+      paused,
+      queue_length: queue.length,
+      voice: TTS_VOICE,
+      read_all: READ_ALL,
+      volume: VOLUME,
+      bot_running: !!botRunning,
+    });
+  });
+
+  // Bot controls
+  app.post('/api/bot/start', async (req, res) => {
+    try {
+      const r = await startBot();
+      res.json({ ok: true, ...r, bot_running: !!botRunning });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e?.message || String(e), bot_running: false });
+    }
+  });
+  app.post('/api/bot/stop', async (req, res) => {
+    try {
+      const r = await stopBot();
+      res.json({ ok: true, ...r, bot_running: !!botRunning });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e?.message || String(e), bot_running: !!botRunning });
+    }
+  });
+
+  // Pause after current
+  app.post('/api/pause', async (req, res) => {
+    paused = true;
+    if (process.platform === 'win32' && helperProc && !helperProc.killed) { try { await helperSend('PAUSE'); } catch {} }
+    else return res.status(400).json({ ok: false, error: 'helper_unavailable' });
+    res.json({ ok: true, paused: true });
+  });
+  app.post('/api/resume', async (req, res) => {
+    paused = false;
+    if (process.platform === 'win32' && helperProc && !helperProc.killed) { try { await helperSend('RESUME'); } catch {} }
+    else return res.status(400).json({ ok: false, error: 'helper_unavailable' });
+    if (queue.length && !playing) drainQueue();
+    res.json({ ok: true, paused });
+  });
+
+  // Skip currently playing (instant stop on Windows)
+  app.post('/api/skip-one', (req, res) => {
+    const ok = interruptCurrentPlayback();
+    res.json({ ok, note: ok ? 'Interrupted current playback.' : 'No active playback to interrupt (or non-Windows).' });
+  });
+
+  // Clear pending queue and interrupt current immediately (Windows)
+  app.post('/api/skip-all', (req, res) => {
+    queue.length = 0;
+    const interrupted = interruptCurrentPlayback();
+    res.json({ ok: true, cleared: true, interrupted });
+  });
+
+  // Set default voice
+  app.post('/api/voice', (req, res) => {
+    const vid = String(req.body?.voice_id || '').trim();
+    if (!vid) return res.status(400).json({ error: 'voice_id required' });
+    if (voicesIdSet.size && !voicesIdSet.has(vid)) return res.status(400).json({ error: 'unknown_voice' });
+    TTS_VOICE = vid;
+    res.json({ ok: true, voice: TTS_VOICE });
+  });
+
+  // Toggle read all
+  app.post('/api/read-all', (req, res) => {
+    const val = String(req.body?.value).toLowerCase();
+    const v = (val === 'true' || val === '1' || req.body?.value === true);
+    READ_ALL = v;
+    res.json({ ok: true, read_all: READ_ALL });
+  });
+
+  // Volume (0..2 scalar)
+  app.post('/api/volume', async (req, res) => {
+    let v = parseFloat(req.body?.value);
+    if (Number.isNaN(v)) return res.status(400).json({ error: 'invalid_volume' });
+    VOLUME = Math.max(0, Math.min(2, v));
+    if (process.platform === 'win32' && helperProc && !helperProc.killed) {
+      const n = Math.max(0, Math.min(1, VOLUME));
+      try { await helperSend(`VOLUME ${n}`); } catch {}
+    } else return res.status(400).json({ ok: false, error: 'helper_unavailable' });
+    res.json({ ok: true, volume: VOLUME });
+  });
+
+  // Simple OBS dock page
+  app.get('/obs', (_req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.end(`<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TTS Controls</title>
+<style>
+  :root{--bg:#0b0d10;--fg:#e6e6e6;--muted:#a9b1ba;--border:#2a2f36;--panel:#1d232a}
+  body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:10px;background:var(--bg);color:var(--fg)}
+  label{display:block;margin:8px 0 4px}
+  button,input,select{padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--fg)}
+  button{cursor:pointer}
+  input[type=range]{width:220px}
+  .row{margin:8px 0}
+  .controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;align-items:stretch}
+  .status{font-size:13px;color:var(--muted)}
+</style>
+<script>
+// OBS dock enhancements
+</script>
+</head><body>
+<h3>TTS Controls</h3>
+<div class="row status">Status: <span id="status">…</span></div>
+<div class="row controls">
+  <button id="botToggle">Start Bot</button>
+  <button id="playToggle">Pause</button>
+  <button id="skip1">Skip Current</button>
+  <button id="skipall">Skip All Pending</button>
+  <label style="grid-column:1/-1">Volume (0.0–2.0)</label>
+  <div style="display:flex;gap:8px;align-items:center;grid-column:1/-1">
+    <input id="vol" type="range" min="0" max="2" step="0.05" value="1"><span id="volv"></span>
+  </div>
+  <label style="grid-column:1/-1">Default Voice</label>
+  <select id="voice" style="grid-column:1/-1"></select>
+  <label style="grid-column:1/-1"><input id="readall" type="checkbox"> Read All Messages</label>
+  <div class="status" id="error" style="grid-column:1/-1;color:#ff9a9a"></div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+async function api(p,method='GET',body){const r=await fetch(p,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});if(!r.ok) throw new Error(await r.text());return r.json();}
+let currentStatus=null;
+function setButtons(s){
+  const botBtn=$('#botToggle');
+  const playBtn=$('#playToggle');
+  if (botBtn) botBtn.textContent = s.bot_running? 'Stop Bot' : 'Start Bot';
+  if (playBtn) playBtn.textContent = s.paused? 'Resume' : 'Pause';
+}
+function setStatus(s){
+  const state = s.bot_running? (s.playing? 'Playing' : (s.paused? 'Paused':'Idle')) : 'Bot Stopped';
+  $('#status').textContent = state + ' | Queue: ' + s.queue_length + ' | Voice: ' + s.voice;
+}
+async function refresh(){
+  try{
+    const s=await api('/api/status'); currentStatus=s;
+    setStatus(s); setButtons(s);
+    $('#vol').value=s.volume; $('#volv').textContent=s.volume.toFixed(2);
+    $('#readall').checked=!!s.read_all;
+    const sel=$('#voice'); if(sel && s.voice && sel.value!==s.voice) sel.value=s.voice;
+    $('#error').textContent='';
+  }catch(e){$('#status').textContent='Error'; $('#error').textContent=String(e.message||e)}
+}
+$('#playToggle').onclick=()=>{
+  if (!currentStatus) return;
+  const path = currentStatus.paused? '/api/resume' : '/api/pause';
+  api(path,'POST').then(refresh).catch(e=>{ $('#error').textContent=String(e.message||e) });
+};
+$('#botToggle').onclick=()=>{
+  if (!currentStatus) return;
+  const path = currentStatus.bot_running? '/api/bot/stop' : '/api/bot/start';
+  api(path,'POST').then(refresh).catch(e=>{ $('#error').textContent=String(e.message||e) });
+};
+$('#skip1').onclick=()=>api('/api/skip-one','POST').then(refresh);
+$('#skipall').onclick=()=>api('/api/skip-all','POST').then(refresh);
+$('#vol').oninput=()=>{$('#volv').textContent=Number($('#vol').value).toFixed(2);} 
+$('#vol').onchange=()=>api('/api/volume','POST',{value:Number($('#vol').value)}).then(refresh);
+$('#readall').onchange=()=>api('/api/read-all','POST',{value:$('#readall').checked}).then(refresh);
+async function loadVoices(){try{const res=await fetch('https://raw.githubusercontent.com/lanes100/twitch-tts-reader/main/tiktokVoices.json'); const arr=await res.json(); const sel=$('#voice'); sel.innerHTML=''; arr.forEach(v=>{const o=document.createElement('option'); o.value=v.voice_id; o.textContent=v.name; sel.appendChild(o);}); if(currentStatus && currentStatus.voice) sel.value=currentStatus.voice; sel.onchange=()=>api('/api/voice','POST',{voice_id:sel.value}).then(refresh);}catch(e){}}
+loadVoices(); refresh(); setInterval(refresh, 3000);
+</script>
+</body></html>`);
+  });
+
+  app.listen(CTRL_PORT, '127.0.0.1', () => {
+    console.log(`OBS Dock available at http://127.0.0.1:${CTRL_PORT}/obs`);
+  });
+} catch (e) {
+  console.warn('Control server failed to start:', e?.message || e);
+}
+
+
+
+
+
