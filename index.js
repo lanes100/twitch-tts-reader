@@ -1,4 +1,3 @@
-// CI trigger: trivial change to kick off build
 // Resolve ffmpeg path; fix asar path when packaged under Electron
 const _ffmpegPath = require('ffmpeg-static');
 const ffmpegPath = _ffmpegPath && _ffmpegPath.includes('app.asar')
