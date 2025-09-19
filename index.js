@@ -26,7 +26,7 @@ const TWITCH_CHANNEL  = process.env.TWITCH_CHANNEL  || '';
 const TWITCH_OAUTH    = process.env.TWITCH_OAUTH    || '';
 const TTS_ENDPOINT    = process.env.TTS_ENDPOINT || 'https://tiktok-tts.weilnet.workers.dev';
 let TTS_VOICE         = process.env.TTS_VOICE || 'en_male_narration';
-const VOICES_DOC_URL  = process.env.VOICES_DOC_URL || 'https://github.com/lanes100/twitch-tts-reader/blob/main/docs/voices.md';
+const VOICES_DOC_URL  = process.env.VOICES_DOC_URL || 'https://lanes100.github.io/twitch-tts-reader/';
 const READ_COMMANDS   = (process.env.READ_COMMANDS || 'false').toLowerCase() === 'true';
 const SELF_READ       = (process.env.SELF_READ || 'false').toLowerCase() === 'true';
 const WRITE_ENV_FILE  = (process.env.WRITE_ENV_FILE || 'true').toLowerCase() !== 'false';

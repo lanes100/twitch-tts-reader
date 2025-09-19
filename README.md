@@ -124,6 +124,7 @@ On connect, it will join `#<TWITCH_CHANNEL>` and speak incoming chat messages ac
 - `!default_voice` — reset your personal voice to the default
 
 ## Voices
+- Browse and preview voices online: https://lanes100.github.io/twitch-tts-reader/ (play sample and copy `!voice` commands)
 - Default voice: `en_male_narration`
 - You can persist a voice by setting `TTS_VOICE` in `.env` or at runtime with the command above.
 - `tiktokVoices.json` contains a curated list of voices (id + human name). This file is optional but used by the validator tool.

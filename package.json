@@ -12,6 +12,7 @@
     "voice:validate:all": "node tools/validate-voice.js --all",
     "dev:electron": "electron electron/main.js",
     "build:electron": "electron-builder -w",
+    "voice:samples": "node tools/generate-voice-samples.js",
     "build:electron:local": "powershell -NoLogo -NoProfile -Command \"$env:ELECTRON_BUILDER_DISABLE_CODE_SIGNING='true'; $env:CSC_IDENTITY_AUTO_DISCOVERY='false'; Remove-Item -Recurse -Force \"$env:LOCALAPPDATA\\electron-builder\\Cache\\winCodeSign\" -ErrorAction SilentlyContinue; electron-builder -w -p never\""
   },
   "devDependencies": {

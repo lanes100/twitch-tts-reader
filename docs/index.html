@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Twitch TTS Reader — Voices</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; background: #0b0d10; color: #e6e6e6; }
+      a { color: #65a9ff; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      header { margin-bottom: 16px; }
+      .toolbar { display: flex; gap: 12px; align-items: center; margin: 12px 0 20px; }
+      input[type="search"] { flex: 1; padding: 10px 12px; height: 38px; border-radius: 8px; border: 1px solid #2a2f36; background: #151a1f; color: #e6e6e6; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(320px,1fr)); gap: 14px; }
+      .card { border: 1px solid #2a2f36; border-radius: 10px; padding: 12px; background: #0e1318; }
+      .name { font-weight: 600; margin: 0 0 6px; }
+      .id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; opacity: 0.85; margin-bottom: 10px; }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      button { padding: 8px 10px; border-radius: 8px; border: 1px solid #2a2f36; background: #1d232a; color: #e6e6e6; cursor: pointer; }
+      button:hover { background: #242b33; border-color: #37404a; }
+      .note { font-size: 12px; opacity: 0.8; margin-top: 6px; }
+      .audio { display: flex; align-items: center; gap: 8px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Twitch TTS Reader — Voices</h1>
+      <div class="note">Pick a voice, play a short sample, and click Copy to paste the chat command (e.g., <code>!voice en_au_002</code>) in Twitch chat.</div>
+      <div class="note">Per-user voice commands work for subs/VIP/mods/broadcaster. Global default voice is set in the app UI.</div>
+    </header>
+
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search voices (name or ID)…" />
+      <button id="copyReset">Copy “!voice default”</button>
+    </div>
+
+    <div id="grid" class="grid"></div>
+
+    <script>
+      const RAW_VOICES_URL = 'https://raw.githubusercontent.com/lanes100/twitch-tts-reader/main/tiktokVoices.json';
+      const samplesBase = 'samples';
+
+      const $ = (s) => document.querySelector(s);
+      const grid = $('#grid');
+      const search = $('#search');
+      const copyResetBtn = $('#copyReset');
+
+      copyResetBtn.onclick = async () => {
+        await navigator.clipboard.writeText('!voice default');
+        copyResetBtn.textContent = 'Copied!';
+        setTimeout(() => copyResetBtn.textContent = 'Copy “!voice default”', 900);
+      };
+
+      function voiceCard(v) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = v.name;
+        const id = document.createElement('div');
+        id.className = 'id';
+        id.textContent = v.voice_id;
+
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+
+        const audioWrap = document.createElement('div');
+        audioWrap.className = 'audio';
+        const audio = document.createElement('audio');
+        audio.controls = true;
+        audio.preload = 'none';
+        audio.src = `${samplesBase}/${v.voice_id}.mp3`;
+        audioWrap.appendChild(audio);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.textContent = 'Copy !voice';
+        copyBtn.onclick = async () => {
+          await navigator.clipboard.writeText(`!voice ${v.voice_id}`);
+          copyBtn.textContent = 'Copied!';
+          setTimeout(() => copyBtn.textContent = 'Copy !voice', 900);
+        };
+
+        actions.appendChild(audioWrap);
+        actions.appendChild(copyBtn);
+
+        card.appendChild(name);
+        card.appendChild(id);
+        card.appendChild(actions);
+        return card;
+      }
+
+      function render(list, q) {
+        grid.innerHTML = '';
+        const norm = (s) => String(s || '').toLowerCase();
+        const needle = norm(q);
+        list
+          .filter(v => !needle || norm(v.name).includes(needle) || norm(v.voice_id).includes(needle))
+          .forEach(v => grid.appendChild(voiceCard(v)));
+      }
+
+      async function init() {
+        try {
+          const res = await fetch(RAW_VOICES_URL, { cache: 'no-cache' });
+          const voices = await res.json();
+          render(voices, '');
+          search.addEventListener('input', () => render(voices, search.value));
+        } catch (e) {
+          grid.textContent = 'Failed to load voice list.';
+          console.error(e);
+        }
+      }
+      init();
+    </script>
+  </body>
+  </html>
+
