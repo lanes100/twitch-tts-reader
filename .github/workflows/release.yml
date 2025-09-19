@@ -14,12 +14,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.tagstep.outputs.tag }}
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Create next v* tag (tag-only)
+        id: tagstep
         run: |
           set -e
           git fetch --tags --force
@@ -37,6 +40,7 @@ jobs:
           next=v${major}.${minor}.$((patch+1))
           echo "Latest tag: $latest"
           echo "Next tag:   $next"
+          echo "tag=$next" >> $GITHUB_OUTPUT
           if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
             echo "Tag $next already exists; nothing to do."
             exit 0
@@ -85,6 +89,55 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: Twitch TTS Reader ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: dist/*.exe
+
+  build-from-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: autotag
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.autotag.outputs.tag }}
+    steps:
+      - name: Guard — skip if no tag created
+        if: env.RELEASE_TAG == ''
+        run: echo "No tag created; skipping build." && exit 0
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron app (Windows)
+        run: npm run build:electron -- -p never
+
+      - name: Remove auto-update metadata (not used)
+        run: |
+          Remove-Item -ErrorAction SilentlyContinue dist\*.yml
+          Remove-Item -ErrorAction SilentlyContinue dist\*.blockmap
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: twitch-tts-reader-win
+          path: dist/*.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Twitch TTS Reader ${{ env.RELEASE_TAG }}
           draft: false
           prerelease: false
           generate_release_notes: true
