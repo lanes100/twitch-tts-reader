@@ -3,13 +3,11 @@
 This page lists how to use voices with Twitch TTS Reader and the complete list of IDs.
 
 Quick usage in chat
-- Broadcaster/mod: change default voice for the stream
-  - `!voice <voice_id>`
-  - Example: `!voice en_male_narration`
-- Subscriber/mod: set your personal voice (persists until you reset)
-  - `!myvoice <voice_id>`
-  - Shorthand: `!<voice_id>` (e.g., `!en_au_002`)
-  - Reset to default: `!default_voice` (also accepts `!default voice`, `!reset voice`, `!default`)
+- Per-user voice (subs/VIP/mods/broadcaster):
+  - Set: `!voice <voice_id>` (e.g., `!voice en_au_002`)
+  - Reset: `!voice default` or `!voice reset`
+  - Shortcuts: `!default`, `!reset`
+  - Note: Global/default voice is set in the app UI, not via chat.
 - Channel point redemptions: if a reward title matches a friendly voice name in the list, that voice is used for that message.
 
 Complete list

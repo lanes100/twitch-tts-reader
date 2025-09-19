@@ -394,8 +394,15 @@ client.on('message', async (channel, tags, message, self) => {
   const isVip = !!(tags.badges && tags.badges.vip);
   const canChangeVoice = (isMod || isSub || isVip) || !VOICE_PRIVILEGED_ONLY;
 
-  // Owner/mod runtime commands
-  const cmdMatch = message.match(/^!(limit|voice)\s+(.+)$/i);
+  // Public command (handle first so it doesn't get caught by shorthand voice matcher)
+  const rawMsg = message.trim();
+  if (/^!voices\b/i.test(rawMsg)) {
+    client.say(channel, `Voice list and instructions: ${VOICES_DOC_URL}`);
+    return;
+  }
+
+  // Owner/mod runtime commands (no global voice changes via chat)
+  const cmdMatch = message.match(/^!(limit)\s+(.+)$/i);
   if (cmdMatch && isMod) {
     const [, cmd, arg] = cmdMatch;
     if (/^limit$/i.test(cmd)) {
@@ -404,44 +411,10 @@ client.on('message', async (channel, tags, message, self) => {
       client.say(channel, `Byte limit set to ${BYTE_LIMIT}.`);
       return;
     }
-    if (/^voice$/i.test(cmd)) {
-      // trust user input; you can validate against a whitelist if you like
-      TTS_VOICE = arg.trim();
-      client.say(channel, `Voice set to ${TTS_VOICE}.`);
-      return;
-    }
   }
 
-  // Subscriber/Mod per-user voice commands
-  const myVoiceMatch = message.match(/^!(myvoice)\s+(\S+)$/i);
-  if (myVoiceMatch && canChangeVoice) {
-    const [, , voiceIdRaw] = myVoiceMatch;
-    const voiceId = voiceIdRaw.trim();
-    if (voicesIdSet.size && !voicesIdSet.has(voiceId)) {
-      client.say(channel, `@${tags['display-name'] || tags.username}, unknown voice id.`);
-      return;
-    }
-    const uid = String(tags['user-id'] || tags.username);
-    userVoices[uid] = voiceId;
-    saveUserVoices();
-    client.say(channel, `@${tags['display-name'] || tags.username}, your voice is now ${voiceId}.`);
-    return;
-  }
-  // Shorthand: !<voice_id> (e.g., !en_au_002)
-  const directVoiceMatch = message.match(/^!([A-Za-z0-9_]+)$/);
-  if (directVoiceMatch && canChangeVoice) {
-    const voiceId = directVoiceMatch[1];
-    if (voicesIdSet.size && !voicesIdSet.has(voiceId)) {
-      client.say(channel, `@${tags['display-name'] || tags.username}, unknown voice id.`);
-      return;
-    }
-    const uid = String(tags['user-id'] || tags.username);
-    userVoices[uid] = voiceId;
-    saveUserVoices();
-    client.say(channel, `@${tags['display-name'] || tags.username}, your voice is now ${voiceId}.`);
-    return;
-  }
-  const resetMatch = message.match(/^!(?:default[_\s]*voice|reset[_\s]*voice|default)$/i);
+  // Per-user reset shorthand before voice-id shorthand
+  const resetMatch = message.match(/^!(?:default(?:[_\s]*voice)?|reset(?:[_\s]*voice)?)$/i);
   if (resetMatch && canChangeVoice) {
     const uid = String(tags['user-id'] || tags.username);
     if (userVoices[uid]) {
@@ -449,6 +422,29 @@ client.on('message', async (channel, tags, message, self) => {
       saveUserVoices();
     }
     client.say(channel, `@${tags['display-name'] || tags.username}, your voice has been reset.`);
+    return;
+  }
+  // Per-user voice set: !voice <voice_id>
+  const setVoiceMatch = message.match(/^!voice\s+(\S+)$/i);
+  if (setVoiceMatch && canChangeVoice) {
+    const input = setVoiceMatch[1].trim();
+    if (/^(default|reset)$/i.test(input)) {
+      const uid = String(tags['user-id'] || tags.username);
+      if (userVoices[uid]) {
+        delete userVoices[uid];
+        saveUserVoices();
+      }
+      client.say(channel, `@${tags['display-name'] || tags.username}, your voice has been reset.`);
+      return;
+    }
+    if (voicesIdSet.size && !voicesIdSet.has(input)) {
+      client.say(channel, `@${tags['display-name'] || tags.username}, unknown voice id. Type !voices to see the list.`);
+      return;
+    }
+    const uid = String(tags['user-id'] || tags.username);
+    userVoices[uid] = input;
+    saveUserVoices();
+    client.say(channel, `@${tags['display-name'] || tags.username}, your voice is now ${input}.`);
     return;
   }
 
@@ -459,11 +455,6 @@ client.on('message', async (channel, tags, message, self) => {
   if (!trimmed) return;
 
   const isCommand = trimmed.startsWith('!');
-  // Public command: link to voices doc
-  if (/^!voices\b/i.test(trimmed)) {
-    client.say(channel, `Voice list and instructions: ${VOICES_DOC_URL}`);
-    return;
-  }
   if (isCommand && !READ_COMMANDS) return;
 
   // Normalize whitespace

@@ -8,13 +8,11 @@ function buildMarkdown(voices) {
   lines.push('This page lists how to use voices with Twitch TTS Reader and the complete list of IDs.');
   lines.push('');
   lines.push('Quick usage in chat');
-  lines.push('- Broadcaster/mod: change default voice for the stream');
-  lines.push('  - `!voice <voice_id>`');
-  lines.push('  - Example: `!voice en_male_narration`');
-  lines.push('- Subscriber/mod: set your personal voice (persists until you reset)');
-  lines.push('  - `!myvoice <voice_id>`');
-  lines.push('  - Shorthand: `!<voice_id>` (e.g., `!en_au_002`)');
-  lines.push('  - Reset to default: `!default_voice` (also accepts `!default voice`, `!reset voice`, `!default`)');
+  lines.push('- Per-user voice (subs/VIP/mods/broadcaster):');
+  lines.push('  - Set: `!voice <voice_id>` (e.g., `!voice en_au_002`)');
+  lines.push('  - Reset: `!voice default` or `!voice reset`');
+  lines.push('  - Shortcuts: `!default`, `!reset`');
+  lines.push('  - Note: Global/default voice is set in the app UI, not via chat.');
   lines.push('- Channel point redemptions: if a reward title matches a friendly voice name in the list, that voice is used for that message.');
   lines.push('');
   lines.push('Complete list');
@@ -49,4 +47,3 @@ function main() {
 }
 
 main();
-
