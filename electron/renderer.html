@@ -215,8 +215,9 @@
       window.api.onThemeChange((theme) => { document.body.classList.toggle('light', theme === 'light'); });
       window.api.onStarted(() => applyRunState(true));
       window.api.onExit(() => applyRunState(false));
+      window.api.onBotRunning((running) => applyRunState(!!running));
 
-      // Initialize run state
+      // Initialize run state and keep in sync with main's poll
       window.api.getBotStatus().then(running => applyRunState(!!running));
     </script>
   </body>

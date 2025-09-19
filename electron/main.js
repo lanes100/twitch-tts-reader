@@ -32,6 +32,36 @@ let mainWindow;
 let botChild = null;
 let oauthServer = null;
 let currentTheme = 'dark';
+let botRunPoll = null;
+
+// ---- Local control (OBS Dock) helpers ----
+const CTRL_HOST = '127.0.0.1';
+const CTRL_PORT = parseInt(process.env.OBS_CTRL_PORT || '5176', 10);
+async function ctrlFetch(pathname, opts = {}) {
+  const url = `http://${CTRL_HOST}:${CTRL_PORT}${pathname}`;
+  const init = { ...opts };
+  if (opts && opts.body && typeof opts.body === 'object' && !(opts.body instanceof Buffer)) {
+    init.headers = { ...(opts.headers || {}), 'Content-Type': 'application/json' };
+    init.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(url, init);
+  const text = await res.text();
+  let json = null; try { json = JSON.parse(text); } catch {}
+  if (!res.ok) throw new Error(json?.error || text || `HTTP ${res.status}`);
+  return json || {};
+}
+async function ctrlStatus() {
+  try { return await ctrlFetch('/api/status'); } catch { return null; }
+}
+async function waitForControlReady(timeoutMs = 8000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const st = await ctrlStatus();
+    if (st && typeof st.bot_running !== 'undefined') return true;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return false;
+}
 
 async function createWindow() {
   logStartup('Creating BrowserWindow');
@@ -166,6 +196,7 @@ function startBot(cfg) {
   const env = {
     ...process.env,
     APP_CONFIG_PATH: CONFIG_PATH,
+    APP_RESOURCES_DIR: process.resourcesPath || path.dirname(app.getAppPath()),
     // Pass through everything else from cfg
     ...merged,
     // But enforce normalized connection fields
@@ -178,11 +209,30 @@ function startBot(cfg) {
   let indexPath = path.join(app.getAppPath(), 'index.js');
   if (!fs.existsSync(indexPath)) indexPath = path.join(__dirname, '..', 'index.js');
   if (!fs.existsSync(indexPath)) indexPath = path.resolve(process.cwd(), 'index.js');
+  // Ensure the in-process bot will auto-start (can still be controlled via API)
+  env.AUTOSTART_BOT = 'true';
   botChild = spawn(process.execPath, [indexPath], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   mainWindow?.webContents.send('bot:started');
   botChild.stdout.on('data', d => mainWindow?.webContents.send('bot:log', d.toString()));
   botChild.stderr.on('data', d => mainWindow?.webContents.send('bot:log', d.toString()));
-  botChild.on('exit', (code) => { mainWindow?.webContents.send('bot:exit', code); botChild = null; });
+  // Start polling in-process bot run state to sync UI even when toggled via dock
+  if (botRunPoll) { clearInterval(botRunPoll); botRunPoll = null; }
+  let lastState = null;
+  botRunPoll = setInterval(async () => {
+    if (!botChild) { if (lastState !== false) { mainWindow?.webContents.send('bot:running', false); lastState = false; } return; }
+    const st = await ctrlStatus();
+    const running = !!(st && st.bot_running);
+    if (running !== lastState) {
+      lastState = running;
+      mainWindow?.webContents.send('bot:running', running);
+    }
+  }, 1000);
+  botChild.on('exit', (code) => {
+    mainWindow?.webContents.send('bot:exit', code);
+    botChild = null;
+    if (botRunPoll) { clearInterval(botRunPoll); botRunPoll = null; }
+    mainWindow?.webContents.send('bot:running', false);
+  });
 }
 
 function stopBot() {
@@ -219,9 +269,30 @@ ipcMain.handle('config:set', async (_e, cfg) => {
   return true;
 });
 ipcMain.handle('oauth:start', async (_e, cfg) => { await startOAuth(cfg); return true; });
-ipcMain.handle('bot:start', async (_e, cfg) => { startBot(cfg); return true; });
-ipcMain.handle('bot:stop', async () => { stopBot(); return true; });
-ipcMain.handle('bot:status', async () => !!botChild);
+ipcMain.handle('bot:start', async (_e, cfg) => {
+  if (!botChild) await startBot(cfg);
+  // Wait for control server to be ready, then ensure client is running
+  await waitForControlReady(8000);
+  try { await ctrlFetch('/api/bot/start', { method: 'POST' }); } catch {}
+  return true;
+});
+ipcMain.handle('bot:stop', async () => {
+  // Prefer stopping the in-process Twitch client via API; keep process alive
+  const ok = await waitForControlReady(3000);
+  if (ok) {
+    try { await ctrlFetch('/api/bot/stop', { method: 'POST' }); } catch {}
+  } else {
+    // Fallback: stop the whole child when control is unavailable
+    stopBot();
+  }
+  return true;
+});
+ipcMain.handle('bot:status', async () => {
+  if (!botChild) return false;
+  const st = await ctrlStatus();
+  if (st && typeof st.bot_running !== 'undefined') return !!st.bot_running;
+  return true; // child alive; assume running if status unavailable
+});
 
 function loadVoicesList() {
   const candidates = [

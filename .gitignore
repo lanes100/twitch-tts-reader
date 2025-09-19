@@ -18,6 +18,7 @@ pnpm-debug.log*
 # Editor/IDE
 .idea/
 .vscode/
+.vs/
 
 # Env variants (keep example tracked)
 .env.*
@@ -31,3 +32,13 @@ pnpm-debug.log*
 .cache/
 coverage/
 tmp/
+
+# .NET (Audio Helper) build artifacts
+audio-helper/bin/
+audio-helper/obj/
+audio-helper/AudioHelper.exe
+audio-helper/*.dll
+audio-helper/*.pdb
+audio-helper/*.deps.json
+audio-helper/*.runtimeconfig.json
+audio-helper/bin/Release/net6.0-windows/win-x64/publish/

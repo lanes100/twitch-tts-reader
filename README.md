@@ -2,6 +2,30 @@
 
 Twitch chat -> TikTok TTS -> audio playback. Windows‑friendly, no native builds.
 
+## OBS Dock Control Panel
+- Local dock URL: `http://127.0.0.1:5176/obs` (configurable via `OBS_CTRL_PORT`).
+- Always on: the dock server runs even if the bot isn’t connected yet.
+- Controls:
+  - Start/Stop Bot (starts/stops the Twitch client)
+  - Play/Pause toggle
+  - Skip Current / Skip All Pending
+  - Volume slider (0.0–2.0)
+  - Default Voice selector
+  - Read All Messages toggle
+- Compact grid layout with proper wrapping to fit square docks.
+
+API (for advanced usage)
+- GET `/api/status` → `{ playing, paused, queue_length, voice, read_all, volume, bot_running }`
+- POST `/api/bot/start`
+- POST `/api/bot/stop`
+- POST `/api/pause`
+- POST `/api/resume`
+- POST `/api/skip-one`
+- POST `/api/skip-all`
+- POST `/api/voice` `{ voice_id }`
+- POST `/api/read-all` `{ value: boolean }`
+- POST `/api/volume` `{ value: number }` (0..2; Windows helper adjusts device volume 0..1)
+
 ## End‑User Quick Start (Recommended)
 - Create a Twitch Application
     1. Go to https://dev.twitch.tv/console/apps and click “Register Your Application”.
@@ -42,6 +66,7 @@ Twitch chat -> TikTok TTS -> audio playback. Windows‑friendly, no native build
 - Minimal delay: while one message plays, the next is generated in parallel.
 - The Read All toggle applies live. Redemptions always read. Admin/voice commands are handled but not spoken unless you enable command reading.
 - Logs: click “Show Logs” to reveal; click again to hide.
+- Dock is available even when the bot is stopped; Electron app and dock buttons stay in sync.
 
 ### Troubleshooting
 - “Authorize” stays gray or missing scopes: click Authorize again and consent; force verify is enabled. Ensure you log in as the channel broadcaster.
@@ -160,6 +185,10 @@ Electron vs CLI
 - The Electron app stores configuration in its own app data and doesn’t require `.env`.
 - The CLI (`npm start`) uses `.env`. Keep `.env.example` as a template.
 
+OBS Dock integration
+- Electron uses the local control API to start/stop the in‑process Twitch client so the dock and app stay synchronized.
+- The renderer’s “Start Bot”/“Stop Bot” toggle reflects changes done in the dock (polled by the main process and emitted as an event).
+
 ## Release Builds (Windows)
 
 Local build
@@ -231,3 +260,7 @@ Notes
   - electron / electron-builder
   - ffmpeg-static
   - node-wav-player
+
+## Environment Reference
+- `OBS_CTRL_PORT` (default `5176`) — port for the local control server and OBS dock.
+- `AUTOSTART_BOT` (default `true`) — when credentials are present, auto‑start the Twitch client at launch. Set to `false` to require manual start.
