@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '.github/**'
+      - 'docs/**'
+      - '**/*.md'
+      - 'LICENSE'
+      - '.vscode/**'
     tags:
       - 'v*'
   workflow_dispatch: {}
@@ -19,19 +25,36 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Bump patch version and create tag
+      - name: Create next v* tag (tag-only)
         run: |
+          set -e
+          git fetch --tags --force
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n 1)
+          if [ -z "$latest" ]; then
+            latest=v0.0.0
+          fi
+          base=${latest#v}
+          IFS='.' read -r major minor patch <<EOF
+          $base
+          EOF
+          major=${major:-0}
+          minor=${minor:-0}
+          patch=${patch:-0}
+          next=v${major}.${minor}.$((patch+1))
+          echo "Latest tag: $latest"
+          echo "Next tag:   $next"
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "Tag $next already exists; nothing to do."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          npm version patch -m "chore(release): %s [skip ci]"
-          git push origin HEAD:main
-          git push origin --tags
+          git tag -a "$next" -m "chore(release): $next [skip ci]"
+          git push origin "$next"
 
   build-win:
+    # Only build on tag events; skip on branch pushes
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     permissions:
       contents: write  # required for creating GitHub Releases
@@ -51,13 +74,16 @@ jobs:
       - name: Build Electron app (Windows)
         run: npm run build:electron -- -p never
 
+      - name: Remove auto-update metadata (not used)
+        run: |
+          Remove-Item -ErrorAction SilentlyContinue dist\*.yml
+          Remove-Item -ErrorAction SilentlyContinue dist\*.blockmap
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: twitch-tts-reader-win
-          path: |
-            dist/*.exe
-            dist/*.yml
+          path: dist/*.exe
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
@@ -68,6 +94,4 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          files: |
-            dist/*.exe
-            dist/*.yml
+          files: dist/*.exe
